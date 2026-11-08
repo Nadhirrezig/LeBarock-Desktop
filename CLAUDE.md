@@ -84,6 +84,11 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   leave (1093 × 614, 1280 × 720).
 - **Closing the window** (with a tray): AltosPOS stays in the tray (the "Directe" printing goes on), the counter's
   session ends; « Quitter AltosPOS » in the tray menu ends it. Without a tray (not Windows), closing quits.
+- **D3 (client, 2026-11-08):** the POS opened from Accueil has a **table picker and « À emporter »** (shown when the
+  restaurant takes take-away orders, as on the web); the **cart copies the web POS's UI and logic** (`pos/kot_items`,
+  `pos/order_items`, `Pos::calculateTotal`); **Commandes = today's orders with the status chips** (as the handheld);
+  **« Annuler la commande » works like the web everywhere**: the order stays « Annulée » with its reason (list + text),
+  the handheld's cancel too (it used to delete the order); the caisse's thermal bill date fixed in the same step.
 
 ## How D1 is built (2026-11-08)
 
@@ -163,13 +168,60 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   « Imprimante de la caisse » printed by the agent within seconds, both "done" on the caisse. Not checked here: USB
   printing through a real Windows driver, the tray and the registry (no Windows): the client's test.
 
+## How D3 is built (2026-11-08)
+
+- **Data:** `data/OrdersRepository` (menu, tables, POS context, orders, send / round / bill / reprint / send again /
+  remove a waiting line / cancel with reason / « Servi »; a ticket asked prints here from the caisse's JSON with
+  « Sur cet appareil », or the caisse's `print_result` with « Imprimante de la caisse »), `data/Money` (the caisse's
+  `currency_format_exact`: at least 2 decimals, its separators and symbol position; the currency is read fresh from
+  `pos-context` and kept), `pos/Cart` (`Cart`, `CartLine`, `CartMath` = the web's arithmetic: each line to 2 decimals,
+  taxes and percent charges on the total, charges only with lines; `sectionsOf` in the Tri order; `searchItems`
+  ignoring case and accents; `ModifierRules`; `tableLabel`: a digits-only code reads « T12 »).
+- **POS** (`ui/pos/PosModel`, `PosScreen`): menu on the left (section tiles « n articles », « ‹ Sections », search over
+  the whole menu — Enter adds a single match —, item cards with the price or « Voir les variations », « Épuisé »;
+  menu choice only on a Caisse without its own menu), the web cart on the right, always visible: « Sur place / À
+  emporter » (when both are allowed), « Commande #n » (the next number, a preview), « Choisir la table » (areas, free /
+  occupied / reserved; a free table asks the covers, 1 by default; an **occupied table opens its check** for a new
+  round), covers stepper, « Note » (the round's note, kitchen ticket), the waiter (a list with « Choisir le serveur »,
+  else the account), lines « name — variation · note · − + · ×qty · bin » with options and the line's note under it
+  (− stops at 1, the same choice adds to its line), « Total · n art. » opening Article(s) / Sous-total / charges (× to
+  take one off a new order) / taxes, « Envoyer », « Encaisser Ticket » (shown greyed until D5), « Imprimer Ticket »
+  (bill + ticket). After an order: a fresh POS (back on « Sur place », next number). Round on an open check (« Nouveau
+  ticket » from Commandes or an occupied table): its lines shown « Envoyé » / « En attente de stock », the new ones
+  editable, « Imprimer Ticket » sends the round then bills. Stock held back: « En attente de stock » window with the
+  stock's message, « Garder en attente » / « Forcer l'envoi » (with the right). A ticket not printed: a window says why
+  (the bill is made). Leaving with lines: « Abandonner la commande ? ». The idle lock is held while the cart has lines.
+  **Short screens** (body under 660 dp: 1366 × 768 once Windows has its bars, 125 %): the header folds into one line
+  (« #4 · Sur place · T3 · 3 couv. · Note · Amel ») that opens its controls in a window; footer buttons 48 dp.
+- **Commandes** (`ui/orders/OrdersModel`, `OrdersScreen`): status chips with counts (Toutes, En cours, Facturées,
+  Payées, À crédit, Annulées), cards (#, status, total, table / à emporter, articles, waiter, time, « Hors ligne »,
+  « À vérifier »), the detail as the web order panel (table · couverts · type · serveur · heure · caisse, cancel reason,
+  round note, « En attente de stock » with Envoyer / Forcer l'envoi, lines by kitchen ticket with its state and « Servi »
+  when ready, lines not sent with a bin when waiting for stock, totals, paid, still due). Actions by state and right:
+  « Nouveau ticket », « Addition », « Addition et impression », « Réimprimer », « Encaisser » (D5, greyed),
+  « Annuler la commande » (list of reasons + comment, one of them required as on the web). Back from a round: Commandes
+  on the same order, with what happened. Times in the PC's own time zone.
+- Window style: `AppDialog` takes its width (no platform maximum), `ScrollArea` (a window's scrolling part, scrollbar
+  only when it overflows), the note windows take the keyboard at once.
+- Tests: 62 (+ `PosDataTest` 9: amounts as the caisse writes them, cart merging / « − » / notes, the web's totals,
+  sections / search / options, « Imprimer Ticket » printed here from the caisse's ticket with every field sent
+  (`print_target`, `waiter_id`, `removed_charge_ids`, note), a ticket not printed leaves the bill made, the stock's
+  refusal with what to do, the POS context's currency kept, cancel with its reason, a refused reprint says why).
+- Checked end to end (2026-11-08) on the packaged app with the local caisse (Moon Lounge card, tables added), at
+  1366 × 768 and 1093 × 614: sections, search, variation, line note, table + 3 covers → « Commande #2 envoyée en
+  cuisine » (the caisse has table 3, 3 covers, the waiter, the note, one kitchen ticket); « À emporter » + « Imprimer
+  Ticket » printed here (« 08 nov. 2026 16:38 »); Commandes → « Nouveau ticket » (dessert) → back on the order with its
+  second kitchen ticket; « Addition et impression »; the Gérant cancelled with « Demande du client — table partie »
+  (kept « Annulée »), the Caissier had no cancel button. Not checked here: a round held by the stock (stock off
+  locally; covered by the tests), on a real Windows screen.
+
 ## Roadmap — step 4 (review approved 2026-11-08; ~17.5 days)
 
 | Step | Caisse | AltosPOS desktop | Effort | Status |
 |---|---|---|---|---|
 | D1 | Counter rights in `abilities` | Réglages (server, test, certificate, session, application), sign-in, Accueil by rights, Caisse picker, change user, idle lock, MSI "AltosPOS" | ~2 d | [x] built 2026-11-08, approved by the client |
-| D2 | Print jobs per printer; branch key endpoint; X / Z thermal ticket fix; currency format fix; « Complet / Résumé » | Style system (client's note on D1); ticket printing (USB or Ethernet), test print, « Sur cet appareil / Imprimante de la caisse », "Directe" agent, tray + start with Windows | ~4 d | [x] built 2026-11-08, client to test |
-| D3 | — | POS (sections in Tri order, search, cart always visible, send, add round, bill, waiting stock / force) and Commandes | ~2.5 d | [ ] |
+| D2 | Print jobs per printer; branch key endpoint; X / Z thermal ticket fix; currency format fix; « Complet / Résumé » | Style system (client's note on D1); ticket printing (USB or Ethernet), test print, « Sur cet appareil / Imprimante de la caisse », "Directe" agent, tray + start with Windows | ~4 d | [x] built 2026-11-08, client: "Great, proceed to D3" |
+| D3 | POS context, waiter right, charge taken off, cancel like the web, bill date | POS (sections in Tri order, search, web cart always visible, table picker + à emporter, send, add round, bill, waiting stock / force) and Commandes | ~3 d | [x] built 2026-11-08, client to test |
 | D4 | Table and check operations; table details | Tables with every operation | ~3.5 d | [ ] |
 | D5 | Discount endpoint | Encaisser: cash + change, Carte (TPE), À crédit, split, tip, discount, receipt | ~2.5 d | [ ] |
 | D6 | Cash register and expense endpoints | Caisse: open with float, cash in / out / safe drop, X, Z with count, stock panel + "Envoyer la demande au stock", dépenses | ~3.5 d | [ ] |
@@ -199,3 +251,9 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
   missing from the installer's runtime (`jdk.localedata` added), the PIN window too tall at 125 % (compact layout).
   53 desktop tests; caisse suite 328 passed. Next: the client tests D2 on the counter PC (USB printer, tray, Windows
   start); then D3 (POS + Commandes).
+- 2026-11-08 — Client: "Great, proceed to D3". Asked first (client's answers): table picker + à emporter; the cart copies
+  the web POS ("copy the same web UI and logic"); Commandes = today with status chips; the bill date fixed now; cancel
+  like the web everywhere. D3 built (see "How D3 is built"); caisse part in its `CLAUDE.md`. Found by running it: the
+  cart's lines had ~180 px at 1366 × 768 (header compacted, then folded into one line on short screens), the bottom
+  buttons were cut, the note window did not take the keyboard, the table picker was held to the platform's dialog width.
+  62 desktop tests; caisse suite 337 passed. Next: the client tests D3 on the counter PC; then D4 (Tables).

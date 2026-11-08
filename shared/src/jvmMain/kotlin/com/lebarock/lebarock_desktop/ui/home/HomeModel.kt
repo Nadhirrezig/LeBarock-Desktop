@@ -17,6 +17,8 @@ class HomeModel(
     private val repository: CaisseRepository,
     sessions: SessionHolder,
     private val onOpenSettings: () -> Unit,
+    /** Opens a section that is built (POS, Commandes…). */
+    private val onOpenSection: (Section) -> Unit = {},
 ) : ScreenModel() {
 
     val session = sessions.session
@@ -47,6 +49,7 @@ class HomeModel(
             section == Section.SETTINGS -> onOpenSettings()
             section.needsCaisse && !hasCaisse -> noCaisse = true
             !section.available -> _messages.trySend("« ${section.title} » arrive à l'étape ${section.comesIn}.")
+            else -> onOpenSection(section)
         }
     }
 

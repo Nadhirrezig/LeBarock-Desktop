@@ -11,6 +11,12 @@ sealed interface Screen {
     data class Login(val notice: String? = null) : Screen
 
     data object Home : Screen
+
+    /** The POS; [orderId]: « Nouveau ticket » on that open check (from Commandes). */
+    data class Pos(val orderId: Long? = null) : Screen
+
+    /** Commandes; [message] to show on arrival, [select] the order to open. */
+    data class Orders(val message: String? = null, val select: Long? = null) : Screen
 }
 
 /** A small back stack: the counter has few screens, all inside one window. */
@@ -26,6 +32,11 @@ class Navigator(initial: Screen) {
 
     fun back() {
         if (stack.size > 1) stack.removeAt(stack.lastIndex)
+    }
+
+    /** Replaces the screen on top (e.g. Commandes again, with a message and the order to show). */
+    fun replaceTop(screen: Screen) {
+        stack[stack.lastIndex] = screen
     }
 
     /** Replaces the whole stack (sign-in, sign-out, lock). */

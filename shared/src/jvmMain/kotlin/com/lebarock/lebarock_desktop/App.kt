@@ -32,6 +32,11 @@ import com.lebarock.lebarock_desktop.ui.common.AppButton
 import com.lebarock.lebarock_desktop.ui.common.rememberScreenModel
 import com.lebarock.lebarock_desktop.ui.home.HomeModel
 import com.lebarock.lebarock_desktop.ui.home.HomeScreen
+import com.lebarock.lebarock_desktop.ui.home.Section
+import com.lebarock.lebarock_desktop.ui.orders.OrdersModel
+import com.lebarock.lebarock_desktop.ui.orders.OrdersScreen
+import com.lebarock.lebarock_desktop.ui.pos.PosModel
+import com.lebarock.lebarock_desktop.ui.pos.PosScreen
 import com.lebarock.lebarock_desktop.ui.idle.IdleMonitor
 import com.lebarock.lebarock_desktop.ui.login.LoginModel
 import com.lebarock.lebarock_desktop.ui.login.LoginScreen
@@ -129,7 +134,13 @@ fun App(container: AppContainer) {
                 }
                 Screen.Home -> {
                     val model = rememberScreenModel(Screen.Home) {
-                        HomeModel(container.repository, container.sessions) { navigator.push(Screen.Settings()) }
+                        HomeModel(container.repository, container.sessions, onOpenSettings = { navigator.push(Screen.Settings()) }) { section ->
+                            when (section) {
+                                Section.POS -> navigator.push(Screen.Pos())
+                                Section.ORDERS -> navigator.push(Screen.Orders())
+                                else -> Unit
+                            }
+                        }
                     }
                     HomeScreen(model, restaurantName = settings.restaurantName, onSwitchUser = {
                         scope.launch {
@@ -138,6 +149,28 @@ fun App(container: AppContainer) {
                             navigator.reset(Screen.Login())
                         }
                     })
+                }
+                is Screen.Pos -> {
+                    val model = rememberScreenModel(screen) {
+                        PosModel(container.orders, container.sessions, container.idle, screen.orderId) { message ->
+                            navigator.back()
+                            // From Commandes: back on the same order, with what happened.
+                            if (screen.orderId != null && navigator.current is Screen.Orders) {
+                                navigator.replaceTop(Screen.Orders(message, select = screen.orderId))
+                            }
+                        }
+                    }
+                    PosScreen(model, caisseName = session?.caisse?.name)
+                }
+                is Screen.Orders -> {
+                    val model = rememberScreenModel(screen) {
+                        OrdersModel(container.orders, container.sessions, screen.message) { id ->
+                            navigator.replaceTop(Screen.Orders(select = id))
+                            navigator.push(Screen.Pos(orderId = id))
+                        }
+                    }
+                    LaunchedEffect(model) { screen.select?.let(model::select) }
+                    OrdersScreen(model, onBack = navigator::back)
                 }
             }
 

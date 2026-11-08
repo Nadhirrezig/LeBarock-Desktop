@@ -85,7 +85,19 @@ interface AltosApi {
     suspend fun printOrder(@Path("id") id: Long, @Body body: PrintRequest): Envelope<Unit?>
 
     @POST("api/mobile/orders/{id}/cancel")
-    suspend fun cancelOrder(@Path("id") id: Long): Envelope<Unit?>
+    suspend fun cancelOrder(@Path("id") id: Long, @Body body: CancelRequest): Envelope<Unit?>
+
+    /** The cart's make-up as on the web POS: order types, next number, taxes, charges, waiters (D3). */
+    @GET("api/mobile/pos-context")
+    suspend fun posContext(): Envelope<PosContextDto>
+
+    /** Reasons offered when cancelling a whole order ("Cancel Order" only). */
+    @GET("api/mobile/cancel-reasons")
+    suspend fun cancelReasons(): Envelope<List<CancelReasonDto>>
+
+    /** « Servi » on a round the kitchen has ready (C1). */
+    @POST("api/mobile/tickets/{id}/served")
+    suspend fun markServed(@Path("id") id: Long): Envelope<kotlinx.serialization.json.JsonObject?>
 
     // ---- Payment (D5) ----
 

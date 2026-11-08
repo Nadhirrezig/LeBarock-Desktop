@@ -66,9 +66,10 @@ class RightsAndTilesTest {
     }
 
     @Test
-    fun only_the_settings_are_built_in_d1() {
-        assertTrue(Section.SETTINGS.available)
-        Section.entries.filter { it != Section.SETTINGS }.forEach { assertFalse(it.available, it.name) }
+    fun d3_brings_the_pos_and_commandes() {
+        val built = setOf(Section.SETTINGS, Section.POS, Section.ORDERS)
+        Section.entries.forEach { assertEquals(it in built, it.available, it.name) }
         assertTrue(Section.POS.needsCaisse && Section.PAYMENT.needsCaisse && Section.CASH_REGISTER.needsCaisse)
+        assertFalse(Section.ORDERS.needsCaisse, "reading the day's orders needs no Caisse")
     }
 }

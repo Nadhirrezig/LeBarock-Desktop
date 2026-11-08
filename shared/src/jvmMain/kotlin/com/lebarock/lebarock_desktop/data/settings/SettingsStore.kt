@@ -26,7 +26,21 @@ data class CurrencyInfo(
     val symbol: String = "DT",
     val position: String? = null,
     val decimals: Int = 3,
-)
+    val decimalSeparator: String = ".",
+    val thousandSeparator: String = "",
+) {
+    companion object {
+        /** As the caisse sends it (ping, POS context); an older caisse sends no separators: "." and none. */
+        fun of(dto: com.lebarock.lebarock_desktop.data.remote.CurrencyDto): CurrencyInfo = CurrencyInfo(
+            code = dto.code,
+            symbol = dto.symbol ?: "DT",
+            position = dto.position,
+            decimals = dto.decimals,
+            decimalSeparator = dto.decimalSeparator?.takeIf { it.isNotEmpty() } ?: ".",
+            thousandSeparator = dto.thousandSeparator ?: "",
+        )
+    }
+}
 
 /** Réglages → « Impression des tickets » (as on the handheld): who prints this PC's bills and receipts. */
 @Serializable

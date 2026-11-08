@@ -1,5 +1,7 @@
 package com.lebarock.lebarock_desktop.ui.common
 
+import androidx.compose.foundation.layout.wrapContentWidth
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.LocalScrollbarStyle
 import androidx.compose.foundation.ScrollState
@@ -464,7 +466,8 @@ fun AppDialog(
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Dialog(onDismissRequest = { if (dismissible) onDismiss() }, properties = DialogProperties(dismissOnClickOutside = dismissible, dismissOnBackPress = dismissible)) {
+    // usePlatformDefaultWidth = false: the window takes the [width] asked (the table picker is wide).
+    Dialog(onDismissRequest = { if (dismissible) onDismiss() }, properties = DialogProperties(dismissOnClickOutside = dismissible, dismissOnBackPress = dismissible, usePlatformDefaultWidth = false)) {
         Surface(shape = Dimens.cardShape, color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp) {
             Column(Modifier.width(width).padding(Dimens.l), verticalArrangement = Arrangement.spacedBy(Dimens.m)) {
                 Column {
@@ -493,5 +496,21 @@ fun AutoSavedNote() {
         Icon(Icons.Outlined.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(Dimens.xs))
         Text("Enregistré automatiquement", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
+    }
+}
+
+/** A scrolling part of a window (list of tables, options, reasons): at most [maxHeight], with its scrollbar. */
+@Composable
+fun ScrollArea(maxHeight: Dp, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val state = rememberScrollState()
+    Box(modifier.heightIn(max = maxHeight)) {
+        Column(Modifier.verticalScroll(state).padding(end = Dimens.sm), verticalArrangement = Arrangement.spacedBy(Dimens.m), content = content)
+        // Only when the content is taller than the area: a scrollbar never makes a short list tall.
+        if (state.maxValue > 0) {
+            androidx.compose.foundation.VerticalScrollbar(
+                androidx.compose.foundation.rememberScrollbarAdapter(state),
+                Modifier.align(Alignment.CenterEnd).matchParentSize().wrapContentWidth(Alignment.End),
+            )
+        }
     }
 }

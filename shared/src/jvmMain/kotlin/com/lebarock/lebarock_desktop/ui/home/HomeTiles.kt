@@ -11,9 +11,9 @@ enum class Section(
     /** The build step that brings the section; null = there now. */
     val comesIn: String?,
 ) {
-    POS("POS", "Prendre une commande : sections, recherche, panier, envoi en cuisine", needsCaisse = true, comesIn = "D3"),
+    POS("POS", "Prendre une commande : sections, recherche, panier, envoi en cuisine", needsCaisse = true, comesIn = null),
     TABLES("Tables / salle", "Plan de salle : ouvrir, ajouter, transférer, fusionner, scinder", needsCaisse = false, comesIn = "D4"),
-    ORDERS("Commandes", "Les commandes du jour : détail, réimpression, annulation", needsCaisse = false, comesIn = "D3"),
+    ORDERS("Commandes", "Les commandes du jour : détail, réimpression, annulation", needsCaisse = false, comesIn = null),
     PAYMENT("Encaisser", "Espèces, carte, à crédit, partage, pourboire, remise", needsCaisse = true, comesIn = "D5"),
     CASH_REGISTER("Caisse", "Ouverture avec fond, X, Z, demande au stock, dépenses", needsCaisse = true, comesIn = "D6"),
     SETTINGS("Réglages", "Serveur, certificat, session, application", needsCaisse = false, comesIn = null),

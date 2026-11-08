@@ -24,6 +24,7 @@ class AppContainer(dataDir: File = AppInfo.dataDir) {
     val secrets = SecretBox(dataDir)
     val ticketPrinter = TicketPrinter(settings)
     val agentClient = AgentClient { api.agentHttp() }
+    val orders = com.lebarock.lebarock_desktop.data.OrdersRepository(repository, settings, ticketPrinter, api.json)
 
     /** Ask the window to end the session and show the sign-in (window closed to the tray). */
     val lockRequests = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)

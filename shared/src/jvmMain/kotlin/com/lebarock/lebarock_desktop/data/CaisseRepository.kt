@@ -45,13 +45,13 @@ class CaisseRepository(
     private val now: () -> Instant = Instant::now,
 ) {
 
-    private fun api(): AltosApi {
+    internal fun api(): AltosApi {
         val baseUrl = settings.current.server.baseUrl
         if (baseUrl.isBlank()) throw ApiFailure("Adresse du serveur non réglée.", FailureKind.OTHER, hint = "Ouvrez Réglages → Serveur.")
         return client.apiFor(baseUrl)
     }
 
-    private suspend fun <T> call(https: Boolean = settings.current.server.https, block: suspend () -> T): Result<T> = try {
+    internal suspend fun <T> call(https: Boolean = settings.current.server.https, block: suspend () -> T): Result<T> = try {
         Result.success(block())
     } catch (e: Exception) {
         val failure = ApiFailure.from(e, https)
@@ -99,9 +99,7 @@ class CaisseRepository(
             current.copy(
                 server = address,
                 restaurantName = check?.ping?.restaurantName ?: if (changed) "" else current.restaurantName,
-                currency = check?.ping?.currency?.let {
-                    CurrencyInfo(code = it.code, symbol = it.symbol ?: "DT", position = it.position, decimals = it.decimals)
-                } ?: current.currency,
+                currency = check?.ping?.currency?.let(CurrencyInfo::of) ?: current.currency,
                 accounts = if (changed) emptyList() else current.accounts,
                 lastUserId = if (changed) null else current.lastUserId,
             )

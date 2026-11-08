@@ -65,6 +65,9 @@ data class CurrencyDto(
     val symbol: String? = null,
     val position: String? = null,
     val decimals: Int = 2,
+    // D3: the separators `currency_format_exact` uses (null from an older caisse: "." and none).
+    @SerialName("decimal_separator") val decimalSeparator: String? = null,
+    @SerialName("thousand_separator") val thousandSeparator: String? = null,
 )
 
 @Serializable
@@ -215,11 +218,22 @@ data class ActiveOrderDto(
 )
 
 @Serializable
+data class TableSessionDto(
+    @SerialName("opened_at") val openedAt: String? = null,
+    val pax: Int = 0,
+    @SerialName("bill_requested") val billRequested: Boolean = false,
+)
+
+@Serializable
 data class TableDto(
     val id: Long,
     val code: String = "",
     val seats: Int = 0,
+    /** available | running | reserved (the caisse's TableState). */
     val status: String = "available",
+    /** The party's visit (opened by staff): couverts, bill asked. */
+    val session: TableSessionDto? = null,
+    @SerialName("pending_qr_rounds") val pendingQrRounds: Int = 0,
     @SerialName("active_order") val activeOrder: ActiveOrderDto? = null,
 )
 
@@ -326,6 +340,10 @@ data class OrderDetailDto(
     val waiter: OrderRefDto? = null,
     val customer: String? = null,
     val terminal: String? = null,
+    /** The round note typed when sending (kitchen ticket). */
+    @SerialName("order_note") val orderNote: String? = null,
+    /** A cancelled check: the reason and / or the text typed (D3, as the web shows it). */
+    @SerialName("cancel_reason") val cancelReason: String? = null,
     val items: List<OrderItemDto> = emptyList(),
     val kots: List<KotDto> = emptyList(),
     // C5: the stock did not take the last round — its French message, and whether this account may force it.
@@ -367,6 +385,8 @@ data class SendOrderRequest(
     val force: Boolean = false,
     // bill_print only: device | caisse (Réglages → Impression des tickets).
     @SerialName("print_target") val printTarget: String? = null,
+    // D3: extra charges taken off this new order before sending (as on the web POS).
+    @SerialName("removed_charge_ids") val removedChargeIds: List<Long> = emptyList(),
 )
 
 @Serializable

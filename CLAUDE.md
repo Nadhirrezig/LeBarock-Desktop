@@ -213,8 +213,10 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   Card (`ItemCard`): the photo in a square (cropped, as `object-cover`), the item type's badge at the top left (veg,
   non-veg, egg, drink; none for « other », which has no icon on the web either), « ÉPUISÉ » over the darkened photo,
   the name on two lines and the price in a green pill with its currency (« 55.000 DT »), or « Voir les variations »;
-  grid of cards from 150 dp (5 columns at 1366 × 768, 3 at 125 %). Compared with the web POS in a browser at
-  1366 × 768: same columns, photo, icon, badge, pill.
+  **one card size, 158 dp, whatever the window** (client, 2026-11-08: the grid used to stretch its columns, so at 125 %
+  3 cards grew to ~195 dp where 4 did not fit): as many columns as fit (5 at 1366 × 768, 3 at 125 %, 8 at 1920), the
+  row centred (`GridCells.FixedSize`). Compared with the web POS in a browser at 1366 × 768: same columns, photo, icon,
+  badge, pill.
 - Tests: 67 (+ `ItemImagesTest` 5: the URL put on the server of Réglages, the food icon without a call, a photo
   fetched once then kept, a photo that does not come falls back and is tried again after a minute, no badge for
   « other »; `PosDataTest` 9: amounts as the caisse writes them, cart merging / « − » / notes, the web's totals,
@@ -274,3 +276,6 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
 - 2026-11-08 — Client: "check the POS uses images like the web and the handheld". It did not (text cards). Client: like
   the web, photo on each article, the food icon for those without, square cards. Built (see "Item photos"), compared
   with the web POS in a browser. Caisse fixes of the same day in its `CLAUDE.md`. 67 desktop tests.
+- 2026-11-08 — Client: the Couscous cards looked bigger in the 125 % screenshot. Cause: the grid stretched its columns to
+  fill the width (3 × ~195 dp at 125 % against 5 × 158 dp at 1366). Fixed: one card size (158 dp), the number of columns
+  follows the width, the row centred; checked at 1366 × 768 and 1093 × 614.

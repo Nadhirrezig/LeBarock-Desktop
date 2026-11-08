@@ -246,10 +246,11 @@ private fun ItemGrid(items: List<MenuItemDto>, currency: CurrencyInfo, images: I
     val state = rememberLazyGridState()
     Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
-            // The web's grid (4 to 6 columns by width): square cards of about 150 to 200 dp.
-            columns = GridCells.Adaptive(minSize = 150.dp),
+            // One card size whatever the window (client, 2026-11-08: the cards grew from 158 to ~195 dp at 125 %, when
+            // the grid stretched 3 columns over the width 4 did not fit): as many columns as fit, the row centred.
+            columns = GridCells.FixedSize(ITEM_CARD_WIDTH),
             state = state,
-            horizontalArrangement = Arrangement.spacedBy(Dimens.sm),
+            horizontalArrangement = Arrangement.spacedBy(Dimens.sm, Alignment.CenterHorizontally),
             verticalArrangement = Arrangement.spacedBy(Dimens.sm),
             contentPadding = PaddingValues(end = Dimens.m, bottom = Dimens.m),
             modifier = Modifier.fillMaxSize(),
@@ -259,6 +260,9 @@ private fun ItemGrid(items: List<MenuItemDto>, currency: CurrencyInfo, images: I
         VerticalScrollbar(rememberScrollbarAdapter(state), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
     }
 }
+
+/** The item cards' one width (as at 1366 × 768: 5 per row; 3 at 125 %, 8 at 1920). */
+private val ITEM_CARD_WIDTH = 158.dp
 
 /**
  * The web POS's item card (`pos/menu`): the photo in a square (the food icon when the item has none), the item

@@ -1,29 +1,14 @@
-This is a Kotlin Multiplatform project targeting Desktop (JVM).
+AltosPOS — counter app for Windows (Kotlin, Compose Multiplatform Desktop).
 
-* [/shared](./shared/src) is for code that will be shared across your Compose Multiplatform applications.
-  It contains several subfolders:
-    - [commonMain](./shared/src/commonMain/kotlin) is for code that’s common for all targets.
-    - Other folders are for Kotlin code that will be compiled for only the platform indicated in the folder name.
-      For example, if you want to use Apple’s CoreCrypto for the iOS part of your Kotlin app,
-      the [iosMain](./shared/src/iosMain/kotlin) folder would be the right place for such calls.
-      Similarly, if you want to edit the Desktop (JVM) specific part, the [jvmMain](./shared/src/jvmMain/kotlin)
-      folder is the appropriate location.
+* [`shared`](./shared/src/jvmMain) holds the app (screens, caisse API, settings); tests in `shared/src/jvmTest`.
+* [`desktopApp`](./desktopApp) holds `main()`, the window and the Windows installer settings.
 
-### Running the apps
+### Run, test, package
 
-Use the run configurations provided by the run widget in your IDE's toolbar. You can also use these commands and
-options:
+- Run: `gradlew.bat :desktopApp:run`
+- Tests: `gradlew.bat :shared:jvmTest`
+- Windows installer (on Windows): `gradlew.bat :desktopApp:packageMsi` →
+  `desktopApp\build\compose\binaries\main\msi\AltosPOS-<version>.msi`
+  (raise `altospos.version` in `gradle.properties` for each release)
 
-- Desktop app:
-    - Hot reload: `./gradlew :desktopApp:hotRun --auto`
-    - Standard run: `./gradlew :desktopApp:run`
-
-### Running tests
-
-Use the run button in your IDE's editor gutter, or run tests using Gradle tasks:
-
-- Desktop tests: `./gradlew :shared:jvmTest`
-
----
-
-Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…
+Plan, decisions and progress: `CLAUDE.md`.

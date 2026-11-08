@@ -198,7 +198,8 @@ private fun Tiles(sections: List<Section>, onOpen: (Section) -> Unit) {
                 shape = Dimens.cardShape,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 184.dp).pointerHoverIcon(PointerIcon.Hand),
+                // One height for every tile: a row never has a shorter card.
+                modifier = Modifier.fillMaxWidth().height(196.dp).pointerHoverIcon(PointerIcon.Hand),
             ) {
                 Column(Modifier.fillMaxWidth().padding(Dimens.l)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -218,7 +219,7 @@ private fun Tiles(sections: List<Section>, onOpen: (Section) -> Unit) {
                     Spacer(Modifier.height(Dimens.m))
                     Text(section.title, style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(Dimens.xs))
-                    Text(section.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(section.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

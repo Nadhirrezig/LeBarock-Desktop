@@ -17,14 +17,15 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
 
 - Kotlin 2.4.21, Compose Multiplatform 1.12.2 (material3 1.12.0-alpha03), Gradle 9.5.1, JDK 21 (Gradle provisions Azul
   Zulu 21 through foojay), versions from the JetBrains wizard (kept, client 2026-11-08). Retrofit 3.0.0, OkHttp 5.5.1,
-  kotlinx.serialization 1.12.0, material-icons-extended 1.7.3.
+  kotlinx.serialization 1.12.0, material-icons-extended 1.7.3, JNA 5.19.1 (Windows DPAPI and registry).
 - Modules: `shared` (all app code, `src/jvmMain`; tests in `src/jvmTest`), `desktopApp` (window, installer settings).
 - Run: `gradlew :desktopApp:run` (Windows: `gradlew.bat`). Tests: `gradlew :shared:jvmTest`.
 - Installer: `gradlew :desktopApp:packageMsi` **on Windows** (jpackage + WiX, downloaded by the Compose plugin) →
   `desktopApp/build/compose/binaries/main/msi/AltosPOS-x.y.z.msi`. Raise `altospos.version` (gradle.properties or
   `-Paltospos.version=`) for each release: MSI versions are MAJOR.MINOR.BUILD; `upgradeUuid` never changes, so a new
   MSI replaces the installed one.
-- Data folder: `%APPDATA%\AltosPOS` (`settings.json`, `logs\altospos-N.log`, `certs\`, `altospos.lock`);
+- Data folder: `%APPDATA%\AltosPOS` (`settings.json`, `logs\altospos-N.log`, `certs\`, `altospos.lock`, `.secret.key`
+  off Windows only);
   `-Daltospos.home=…` overrides it (tests, dev).
 - **Cloud sessions:** Maven Central, Google Maven and foojay answer, but `cdn.azul.com` (the JDK download) is blocked:
   build with the local JDK 21 by setting `gradle/gradle-daemon-jvm.properties` aside for the build (and putting it
@@ -73,6 +74,16 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   certificates imported in Réglages → Certificat (`certs\`). Errors say what to do (certificate not trusted, made for
   another address, HTTP port, port closed, no answer, not a caisse…).
 - One AltosPOS per Windows session (lock file): a second copy would sign in and, from D2, print twice.
+- **Style (client, 2026-11-08, after D1: "buttons, texts, margins and paddings must be right"; Réglages had display
+  issues):** one set of sizes for every screen (`ui/theme/Dimens`): spacing in steps of 8, every button and field
+  48 dp, a window's main action 56 dp, one corner radius (10), text never below 14 sp, choices shown in green with a
+  check, choice boxes as wide as their longest label (nothing cut, nothing moves), a scrollbar on every scrolling
+  page, label above each field, every line of a block on one left edge. Réglages stays **one page** (client chose it
+  over a side menu); only the server has « Enregistrer » (greyed until something changes), every other section saves
+  on each change and says « Enregistré automatiquement ». Checked at 1366 × 768 and at the sizes Windows 125 % / 150 %
+  leave (1093 × 614, 1280 × 720).
+- **Closing the window** (with a tray): AltosPOS stays in the tray (the "Directe" printing goes on), the counter's
+  session ends; « Quitter AltosPOS » in the tray menu ends it. Without a tray (not Windows), closing quits.
 
 ## How D1 is built (2026-11-08)
 
@@ -112,12 +123,52 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   Réglages, test + save, sign-in list, wrong then right PIN (keypad), Serveur / Caissier / Gérant buttons, Gérant
   without Caisse → picker → Caisse, Réglages from Accueil, idle lock at 2 min with its warning.
 
+## How D2 is built (2026-11-08)
+
+- **Style system:** `ui/theme/Dimens` (sizes), typography floor 14 sp, scrollbar style in `AltosTheme`;
+  `ui/common/Controls.kt`: `AppButton` (primary / secondary / text / danger, 48 or 56 dp, hand cursor), `TextInput`
+  (48 dp, green focus, red error), `FormField` (label above, help or error under), `ChoiceRow` (equal boxes sized to the
+  widest label, check space always kept), `SelectField`, `AppTopBar` (72 dp), `ScrollPage` (centred 960 dp + scrollbar),
+  `SectionCard`, `SubHeading`, `InfoRow` (one text size, paths break after a separator), `AppDialog`, `AutoSavedNote`.
+  Réglages, Connexion (PIN window compact under 760 dp of height: 48 dp keys, buttons keep their height), Accueil
+  (tiles one height) and their windows use only these.
+- **Printing** (`print/`): `ReceiptPayload` (the caisse's ticket JSON, copied from the handheld + `remainingDue`),
+  `ReceiptRenderer` (ported; section titles of the X / Z, test ticket with an edge-to-edge line), `EscPosEncoder` (ESC @,
+  code page PC858 = 19 / Windows-1252 = 16 / sans accents, bold, double size, feed, partial cut, QR; narrow spaces,
+  dashes and French quotes written plainly), `TicketTransport` (`WindowsPrinterTransport`: raw bytes to the Windows
+  spooler by printer name, `DocFlavor.BYTE_ARRAY.AUTOSENSE`; `NetworkTransport`: port 9100, 4 s connect), `TicketPrinter`
+  (one ticket at a time, French messages). Settings `PrinterConfig` (target device / caisse, USB / Ethernet, Windows
+  printer, IP / port, 58 / 80 mm, charset). MSI modules + `jdk.charsets` (PC858) + `jdk.localedata` (French dates: the
+  installed app wrote "Sun 8 Nov" without it).
+- **Impression « Directe »** (`print/PrintAgent`): `AgentClient` (OkHttp without the session token, header
+  X-AltosPos-KEY): `pull?printer_id=` every 2 s → job bytes (`payload.base64`, else `text` read as Latin-1) →
+  `TicketPrinter.printRaw` (cut added when asked and missing) → `PATCH /api/print-jobs/{id}` done / failed with the
+  printer's name; 401 → "clé refusée", stops; caisse down → retry 10 s; printer error → job failed, shown. Status for
+  Réglages and the tray. Set-up (`PrintingModel`): an admin's sign-in made only for this (`device_name`
+  `altospos-desktop-agent`, token ended right after) → `GET /api/mobile/desktop/print-agent` → key sealed with
+  `SecretBox` (DPAPI on Windows; AES-GCM + key file elsewhere) + printers; printer list refreshed later with the key
+  (`/api/printer-details`). A printer not in "Directe" on the caisse is flagged.
+- **Tray / startup** (`desktopApp/main.kt`): Compose `Tray` (Ouvrir, état de l'impression « Directe », Quitter);
+  closing hides the window and ends the session (`AppContainer.lockRequests`), a one-time notification says AltosPOS
+  stays open; `--tray` starts hidden; `WindowsStartup` (HKCU\…\Run "AltosPOS" = `"<AltosPOS.exe>" --tray`, JNA
+  Advapi32), on at the installed app's first start (`startWithWindows` null), Réglages → Application to change it.
+- Tests: 53 (+ `PrintingTest` 12: code pages, typographic characters, styles, QR, no line wider than 58 / 80 mm,
+  bill with "Reste dû", X / Z layout, test ticket, Ethernet to a local socket, refused port, nothing sent before a printer
+  is chosen, cut once, one ticket at a time; `PrintAgentTest` 7: exact bytes printed and reported done, older job without
+  base64, printer failure reported failed, refused key stops, caisse down retried, off / no printer does nothing, key
+  sealed). `CaisseRepositoryTest`'s "HTTPS to an HTTP port" now uses a server that answers at once (it was flaky).
+- Checked end to end (2026-11-08) with the local caisse under Xvfb, packaged app: Réglages at 1366 × 768 and 1093 × 614;
+  "Imprimer un test" on a stand-in Ethernet printer (accents right in PC858, 48 columns, cut); « Directe » set-up refused
+  for a Caissier, done by the admin (temporary tokens deleted); an X queued by the caisse and a handheld bill sent to
+  « Imprimante de la caisse » printed by the agent within seconds, both "done" on the caisse. Not checked here: USB
+  printing through a real Windows driver, the tray and the registry (no Windows): the client's test.
+
 ## Roadmap — step 4 (review approved 2026-11-08; ~17.5 days)
 
 | Step | Caisse | AltosPOS desktop | Effort | Status |
 |---|---|---|---|---|
-| D1 | Counter rights in `abilities` | Réglages (server, test, certificate, session, application), sign-in, Accueil by rights, Caisse picker, change user, idle lock, MSI "AltosPOS" | ~2 d | [x] built 2026-11-08, client to test |
-| D2 | Print jobs per printer; branch key endpoint; X / Z thermal ticket fix; currency format fix; « Complet / Résumé » | Ticket printing (USB or Ethernet), test print, « Sur cet appareil / Imprimante de la caisse », "Directe" agent, tray + start with Windows | ~3 d | [ ] |
+| D1 | Counter rights in `abilities` | Réglages (server, test, certificate, session, application), sign-in, Accueil by rights, Caisse picker, change user, idle lock, MSI "AltosPOS" | ~2 d | [x] built 2026-11-08, approved by the client |
+| D2 | Print jobs per printer; branch key endpoint; X / Z thermal ticket fix; currency format fix; « Complet / Résumé » | Style system (client's note on D1); ticket printing (USB or Ethernet), test print, « Sur cet appareil / Imprimante de la caisse », "Directe" agent, tray + start with Windows | ~4 d | [x] built 2026-11-08, client to test |
 | D3 | — | POS (sections in Tri order, search, cart always visible, send, add round, bill, waiting stock / force) and Commandes | ~2.5 d | [ ] |
 | D4 | Table and check operations; table details | Tables with every operation | ~3.5 d | [ ] |
 | D5 | Discount endpoint | Encaisser: cash + change, Carte (TPE), À crédit, split, tip, discount, receipt | ~2.5 d | [ ] |
@@ -140,3 +191,11 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
 - 2026-11-08 — D1 built (see "How D1 is built"): 34 desktop tests, caisse suite 316 passed (8 skipped); run end to end
   against a local caisse with screenshots. Next: the client builds (`gradlew run`, `packageMsi`) and tests D1 on the
   counter PC; then D2.
+- 2026-11-08 — Client approved D1, with a note: the style must be right (buttons, texts, margins, paddings) — Réglages had
+  display issues. Measured at 1366 × 768 and the 125 % / 150 % sizes: no scrollbar, five control heights, 12 px help
+  text, blue selections, chips moving, misaligned rows, unclear saving. Client chose: Réglages one page, cleaned up,
+  inside D2. D2 built (see "How D2 is built"): style system on every screen, ticket printing, test print, « Directe »
+  agent, tray, start with Windows; caisse part in its `CLAUDE.md`. Found by running the packaged app: French dates
+  missing from the installer's runtime (`jdk.localedata` added), the PIN window too tall at 125 % (compact layout).
+  53 desktop tests; caisse suite 328 passed. Next: the client tests D2 on the counter PC (USB printer, tray, Windows
+  start); then D3 (POS + Commandes).

@@ -37,7 +37,8 @@ compose.desktop {
             // (mkcert's root CA installed in Windows) is read through jdk.crypto.mscapi,
             // which only exists in a Windows JDK.
             // jdk.charsets: the PC858 code page of the ticket printer (IBM00858).
-            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported", "jdk.charsets")
+            // jdk.localedata: French dates ("dimanche 8 novembre"); without it the installed app writes "Sun 8 Nov".
+            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported", "jdk.charsets", "jdk.localedata")
             if (isWindows) modules("jdk.crypto.mscapi")
 
             windows {

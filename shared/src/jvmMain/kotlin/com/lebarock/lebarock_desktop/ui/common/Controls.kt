@@ -56,6 +56,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -188,8 +190,8 @@ fun TextInput(
 
 /**
  * A labelled form control: the label above (same left edge as everything in the section), the
- * control, then one line of help or the error. The help line is always there, so fields side by
- * side stay aligned.
+ * control, then its help or its error when it has one. Fields side by side both get a help line,
+ * so they stay aligned.
  */
 @Composable
 fun FormField(
@@ -203,21 +205,23 @@ fun FormField(
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(Dimens.s))
         content()
-        Spacer(Modifier.height(6.dp))
-        Text(
-            error ?: help ?: "",
-            style = MaterialTheme.typography.bodySmall,
-            color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.heightIn(min = 19.dp),
-        )
+        if (error != null || help != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                error ?: help ?: "",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
 data class Choice<T>(val value: T, val label: String)
 
 /**
- * Pick one of a few values: equal boxes side by side, the chosen one green with a check. Every
- * box keeps its width, so choosing never moves the others.
+ * Pick one of a few values: boxes side by side, the chosen one green with a check. Every box is
+ * as wide as the longest label (check mark space included), so no label is cut and choosing
+ * never moves the others; when the row has less room, the boxes share it equally.
  */
 @Composable
 fun <T> ChoiceRow(
@@ -229,29 +233,55 @@ fun <T> ChoiceRow(
     enabled: Boolean = true,
 ) {
     val colors = MaterialTheme.colorScheme
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
-        choices.forEach { choice ->
-            val on = choice.value == selected
-            val itemModifier = (if (itemWidth != null) Modifier.width(itemWidth) else Modifier.weight(1f))
-                .height(Dimens.control)
-                .clip(Dimens.shape)
-                .background(if (on) colors.primaryContainer else colors.surface)
-                .border(if (on) 2.dp else 1.dp, if (on) colors.primary else colors.outline, Dimens.shape)
-                .clickable(enabled = enabled) { onSelect(choice.value) }
-                .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
-                .padding(horizontal = Dimens.sm)
-            Row(itemModifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                if (on) {
-                    Icon(Icons.Outlined.Check, contentDescription = null, tint = colors.primary, modifier = Modifier.size(18.dp))
+    val gap = Dimens.s
+    val minWidth = itemWidth ?: 96.dp
+    Layout(
+        content = {
+            choices.forEach { choice ->
+                val on = choice.value == selected
+                Row(
+                    Modifier
+                        .clip(Dimens.shape)
+                        .background(if (on) colors.primaryContainer else colors.surface)
+                        .border(if (on) 2.dp else 1.dp, if (on) colors.primary else colors.outline, Dimens.shape)
+                        .clickable(enabled = enabled) { onSelect(choice.value) }
+                        .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
+                        .padding(horizontal = Dimens.m),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    // The check's place is kept on every box: the widths never depend on the choice.
+                    Icon(
+                        Icons.Outlined.Check, contentDescription = null,
+                        tint = if (on) colors.primary else androidx.compose.ui.graphics.Color.Transparent,
+                        modifier = Modifier.size(18.dp),
+                    )
                     Spacer(Modifier.width(6.dp))
+                    Text(
+                        choice.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (on) colors.onPrimaryContainer else if (enabled) colors.onSurface else colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.width(24.dp))
                 }
-                Text(
-                    choice.label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (on) colors.onPrimaryContainer else if (enabled) colors.onSurface else colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            }
+        },
+        modifier = modifier,
+    ) { measurables, constraints ->
+        val n = measurables.size.coerceAtLeast(1)
+        val gapPx = gap.roundToPx()
+        val heightPx = Dimens.control.roundToPx()
+        val widest = maxOf(minWidth.roundToPx(), measurables.maxOfOrNull { it.maxIntrinsicWidth(heightPx) } ?: 0)
+        val room = if (constraints.hasBoundedWidth) (constraints.maxWidth - gapPx * (n - 1)) / n else widest
+        val w = minOf(widest, room).coerceAtLeast(0)
+        val placeables = measurables.map { it.measure(Constraints.fixed(w, heightPx)) }
+        layout(w * n + gapPx * (n - 1), heightPx) {
+            var x = 0
+            placeables.forEach { p ->
+                p.placeRelative(x, 0)
+                x += w + gapPx
             }
         }
     }

@@ -55,6 +55,8 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -218,6 +220,11 @@ private fun AccountCard(account: AccountDto, last: Boolean, onClick: () -> Unit)
  */
 @Composable
 private fun PinDialogView(model: LoginModel, d: PinDialog) {
+    // A short window (Windows at 125 % on a 1366 × 768 screen leaves ~614 dp): a compact layout,
+    // same order, so the two buttons always keep their full height.
+    val windowHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+    val compact = windowHeight < 760.dp
+    val keyHeight = if (compact) Dimens.control else Dimens.primary
     Dialog(onDismissRequest = model::dismiss, properties = DialogProperties(dismissOnClickOutside = !d.submitting)) {
         Surface(shape = Dimens.cardShape, color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp) {
             Column(
@@ -231,11 +238,23 @@ private fun PinDialogView(model: LoginModel, d: PinDialog) {
                 },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Initials(d.account.name, d.account.id, 64.dp)
-                Spacer(Modifier.height(Dimens.sm))
-                Text(d.account.name, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
-                Text(d.account.roles.joinToString(", "), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(Dimens.l))
+                if (compact) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Initials(d.account.name, d.account.id, 40.dp)
+                        Spacer(Modifier.width(Dimens.sm))
+                        Column {
+                            Text(d.account.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(d.account.roles.joinToString(", "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Spacer(Modifier.height(Dimens.m))
+                } else {
+                    Initials(d.account.name, d.account.id, 64.dp)
+                    Spacer(Modifier.height(Dimens.sm))
+                    Text(d.account.name, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+                    Text(d.account.roles.joinToString(", "), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(Dimens.l))
+                }
 
                 var visible by remember { mutableStateOf(false) }
                 val focus = remember { FocusRequester() }
@@ -262,15 +281,15 @@ private fun PinDialogView(model: LoginModel, d: PinDialog) {
                         }
                     },
                 )
-                Box(Modifier.fillMaxWidth().heightIn(min = 32.dp).padding(top = Dimens.s), contentAlignment = Alignment.TopStart) {
+                Box(Modifier.fillMaxWidth().heightIn(min = if (compact) 28.dp else 32.dp).padding(top = Dimens.s), contentAlignment = Alignment.TopStart) {
                     d.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
                 }
-                Spacer(Modifier.height(Dimens.s))
-                Keypad(enabled = !d.submitting, onDigit = model::key, onBackspace = model::backspace, onClear = model::clear)
-                Spacer(Modifier.height(Dimens.l))
+                Spacer(Modifier.height(if (compact) Dimens.xs else Dimens.s))
+                Keypad(enabled = !d.submitting, keyHeight = keyHeight, onDigit = model::key, onBackspace = model::backspace, onClear = model::clear)
+                Spacer(Modifier.height(if (compact) Dimens.m else Dimens.l))
                 Row(horizontalArrangement = Arrangement.spacedBy(Dimens.sm), modifier = Modifier.fillMaxWidth()) {
-                    AppButton("Annuler", model::dismiss, Modifier.weight(1f), kind = ButtonKind.SECONDARY, enabled = !d.submitting, large = true)
-                    AppButton("Valider", model::submit, Modifier.weight(1f), icon = Icons.AutoMirrored.Outlined.Login, loading = d.submitting, large = true)
+                    AppButton("Annuler", model::dismiss, Modifier.weight(1f), kind = ButtonKind.SECONDARY, enabled = !d.submitting, large = !compact)
+                    AppButton("Valider", model::submit, Modifier.weight(1f), icon = Icons.AutoMirrored.Outlined.Login, loading = d.submitting, large = !compact)
                 }
             }
         }
@@ -278,26 +297,26 @@ private fun PinDialogView(model: LoginModel, d: PinDialog) {
 }
 
 @Composable
-private fun Keypad(enabled: Boolean, onDigit: (Char) -> Unit, onBackspace: () -> Unit, onClear: () -> Unit) {
+private fun Keypad(enabled: Boolean, keyHeight: androidx.compose.ui.unit.Dp, onDigit: (Char) -> Unit, onBackspace: () -> Unit, onClear: () -> Unit) {
     val rows = listOf("123", "456", "789")
     Column(verticalArrangement = Arrangement.spacedBy(Dimens.s)) {
         rows.forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
-                row.forEach { c -> KeyButton(c.toString(), enabled) { onDigit(c) } }
+                row.forEach { c -> KeyButton(c.toString(), enabled, keyHeight) { onDigit(c) } }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
-            KeyButton("Effacer", enabled, small = true, onClick = onClear)
-            KeyButton("0", enabled) { onDigit('0') }
+            KeyButton("Effacer", enabled, keyHeight, small = true, onClick = onClear)
+            KeyButton("0", enabled, keyHeight) { onDigit('0') }
             Box(Modifier.width(Dimens.keyWidth)) {
-                AppButton("", onBackspace, Modifier.fillMaxWidth(), kind = ButtonKind.SECONDARY, icon = Icons.AutoMirrored.Outlined.Backspace, enabled = enabled, large = true, focusable = false)
+                AppButton("", onBackspace, Modifier.fillMaxWidth().height(keyHeight), kind = ButtonKind.SECONDARY, icon = Icons.AutoMirrored.Outlined.Backspace, enabled = enabled, focusable = false)
             }
         }
     }
 }
 
 @Composable
-private fun KeyButton(label: String, enabled: Boolean, small: Boolean = false, onClick: () -> Unit) {
+private fun KeyButton(label: String, enabled: Boolean, height: androidx.compose.ui.unit.Dp, small: Boolean = false, onClick: () -> Unit) {
     androidx.compose.material3.OutlinedButton(
         onClick = onClick,
         enabled = enabled,
@@ -305,7 +324,7 @@ private fun KeyButton(label: String, enabled: Boolean, small: Boolean = false, o
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
         // Not focusable: the password field keeps the keyboard while the keypad is used.
-        modifier = Modifier.size(width = Dimens.keyWidth, height = Dimens.primary)
+        modifier = Modifier.size(width = Dimens.keyWidth, height = height)
             .focusProperties { canFocus = false }
             .pointerHoverIcon(PointerIcon.Hand),
         contentPadding = PaddingValues(0.dp),

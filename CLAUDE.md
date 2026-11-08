@@ -137,6 +137,6 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
   printing like the Sunmi with USB **or** Ethernet; tray + start with Windows; branch key fetched by an admin; Tables
   with every operation; X / Z « Complet / Résumé » + currency fix; server = IP + port; name AltosPOS; Réglages with
   printer test and connection test. Plan updated to ~17.5 days, approved ("start D1").
-- 2026-11-08 — D1 built (see "How D1 is built"): 34 desktop tests, caisse `RightsTest` 11 passed; run end to end
+- 2026-11-08 — D1 built (see "How D1 is built"): 34 desktop tests, caisse suite 316 passed (8 skipped); run end to end
   against a local caisse with screenshots. Next: the client builds (`gradlew run`, `packageMsi`) and tests D1 on the
   counter PC; then D2.

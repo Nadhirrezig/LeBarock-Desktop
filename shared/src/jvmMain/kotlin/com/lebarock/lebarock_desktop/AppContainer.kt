@@ -2,6 +2,10 @@ package com.lebarock.lebarock_desktop
 
 import com.lebarock.lebarock_desktop.data.AppLog
 import com.lebarock.lebarock_desktop.data.CaisseRepository
+import com.lebarock.lebarock_desktop.data.SecretBox
+import com.lebarock.lebarock_desktop.print.AgentClient
+import com.lebarock.lebarock_desktop.print.PrintAgent
+import com.lebarock.lebarock_desktop.print.TicketPrinter
 import com.lebarock.lebarock_desktop.data.remote.ApiClient
 import com.lebarock.lebarock_desktop.data.session.SessionHolder
 import com.lebarock.lebarock_desktop.data.settings.SettingsStore
@@ -17,6 +21,13 @@ class AppContainer(dataDir: File = AppInfo.dataDir) {
     val api = ApiClient(tokenProvider = { sessions.token })
     val repository = CaisseRepository(api, settings, sessions)
     val idle = IdleMonitor()
+    val secrets = SecretBox(dataDir)
+    val ticketPrinter = TicketPrinter(settings)
+    val agentClient = AgentClient { api.agentHttp() }
+
+    /** Ask the window to end the session and show the sign-in (window closed to the tray). */
+    val lockRequests = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val printAgent = PrintAgent(settings, secrets, ticketPrinter, agentClient)
 }
 
 /**

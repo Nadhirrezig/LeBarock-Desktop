@@ -1,5 +1,9 @@
 package com.lebarock.lebarock_desktop.ui.home
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,31 +21,25 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
-import androidx.compose.material.icons.outlined.AccountBalanceWallet
-import androidx.compose.material.icons.outlined.PointOfSale
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.PointOfSale
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storefront
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TableRestaurant
-import androidx.compose.material.icons.outlined.Payments
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -51,20 +49,28 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import com.lebarock.lebarock_desktop.data.remote.TerminalDto
 import com.lebarock.lebarock_desktop.data.session.Session
+import com.lebarock.lebarock_desktop.ui.common.AppButton
+import com.lebarock.lebarock_desktop.ui.common.AppDialog
+import com.lebarock.lebarock_desktop.ui.common.AppTopBar
 import com.lebarock.lebarock_desktop.ui.common.Banner
+import com.lebarock.lebarock_desktop.ui.common.ButtonKind
 import com.lebarock.lebarock_desktop.ui.common.Initials
 import com.lebarock.lebarock_desktop.ui.common.LoadingBox
-import com.lebarock.lebarock_desktop.ui.common.LogoImage
 import com.lebarock.lebarock_desktop.ui.common.Tone
 import com.lebarock.lebarock_desktop.ui.common.UiState
 import com.lebarock.lebarock_desktop.ui.theme.Danger
 import com.lebarock.lebarock_desktop.ui.theme.DangerContainer
+import com.lebarock.lebarock_desktop.ui.theme.Dimens
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -86,8 +92,8 @@ fun HomeScreen(model: HomeModel, restaurantName: String, onSwitchUser: () -> Uni
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
             Column(
-                Modifier.widthIn(max = 1280.dp).fillMaxWidth().padding(28.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+                Modifier.widthIn(max = 1200.dp).fillMaxWidth().padding(Dimens.l),
+                verticalArrangement = Arrangement.spacedBy(Dimens.l),
             ) {
                 Text("Bonjour ${s.user.name.substringBefore(' ')}", style = MaterialTheme.typography.headlineSmall)
                 when {
@@ -101,7 +107,7 @@ fun HomeScreen(model: HomeModel, restaurantName: String, onSwitchUser: () -> Uni
                         "Aucune caisse pour ce compte",
                         detail = if (s.canSwitchCaisse) "Choisissez la caisse de ce comptoir pour prendre des commandes et encaisser." else NO_CAISSE_MESSAGE,
                         action = if (s.canSwitchCaisse) {
-                            { Button(onClick = model::openPicker) { Text("Choisir une caisse") } }
+                            { AppButton("Choisir une caisse", model::openPicker) }
                         } else {
                             null
                         },
@@ -118,53 +124,46 @@ fun HomeScreen(model: HomeModel, restaurantName: String, onSwitchUser: () -> Uni
 
 @Composable
 private fun HomeTopBar(s: Session, restaurantName: String, onSwitchUser: () -> Unit, onPickCaisse: () -> Unit) {
-    Surface(shadowElevation = 2.dp, color = MaterialTheme.colorScheme.surface) {
-        Row(
-            Modifier.fillMaxWidth().heightIn(min = 76.dp).padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            LogoImage(44.dp)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(restaurantName.ifBlank { "AltosPOS" }, style = MaterialTheme.typography.titleLarge)
-                Clock()
-            }
-            val caisse = s.caisse
-            AssistChip(
-                onClick = { if (s.canSwitchCaisse) onPickCaisse() },
-                label = { Text(if (caisse != null) "Caisse : ${caisse.name}" else "Aucune caisse", fontWeight = FontWeight.SemiBold) },
-                leadingIcon = { Icon(Icons.Outlined.Storefront, contentDescription = null) },
-                trailingIcon = if (s.canSwitchCaisse) {
-                    { Icon(Icons.Outlined.SwapHoriz, contentDescription = "Changer de caisse") }
-                } else {
-                    null
-                },
-                colors = if (caisse == null) {
-                    AssistChipDefaults.assistChipColors(containerColor = DangerContainer, labelColor = Danger, leadingIconContentColor = Danger)
-                } else {
-                    AssistChipDefaults.assistChipColors()
-                },
-                modifier = Modifier.height(44.dp),
-            )
-            Spacer(Modifier.width(20.dp))
-            Initials(s.user.name, s.user.id, 44.dp)
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(s.user.name, style = MaterialTheme.typography.titleMedium)
-                Text(s.roleLabel.ifBlank { "—" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.width(20.dp))
-            OutlinedButton(onClick = onSwitchUser, modifier = Modifier.height(52.dp)) {
-                Icon(Icons.AutoMirrored.Outlined.Logout, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Changer d'utilisateur")
-            }
+    AppTopBar(title = restaurantName.ifBlank { "AltosPOS" }, subtitle = clockText()) {
+        CaisseChip(s, onPickCaisse)
+        Spacer(Modifier.width(Dimens.s))
+        Initials(s.user.name, s.user.id, 40.dp)
+        Column(Modifier.widthIn(max = 220.dp)) {
+            Text(s.user.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(s.roleLabel.ifBlank { "—" }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
+        Spacer(Modifier.width(Dimens.s))
+        AppButton("Changer d'utilisateur", onSwitchUser, kind = ButtonKind.SECONDARY, icon = Icons.AutoMirrored.Outlined.Logout)
+    }
+}
+
+/** The account's Caisse; red when there is none; a manager clicks it to choose another. */
+@Composable
+private fun CaisseChip(s: Session, onPick: () -> Unit) {
+    val caisse = s.caisse
+    val colors = MaterialTheme.colorScheme
+    val fg = if (caisse == null) Danger else colors.onSurface
+    Row(
+        Modifier.height(Dimens.control).clip(Dimens.shape)
+            .background(if (caisse == null) DangerContainer else colors.surface)
+            .border(1.dp, if (caisse == null) Danger.copy(alpha = 0.4f) else colors.outline, Dimens.shape)
+            .clickable(enabled = s.canSwitchCaisse, onClick = onPick)
+            .pointerHoverIcon(if (s.canSwitchCaisse) PointerIcon.Hand else PointerIcon.Default)
+            .padding(horizontal = Dimens.m),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Storefront, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(Dimens.s))
+        Text(if (caisse != null) "Caisse : ${caisse.name}" else "Aucune caisse", style = MaterialTheme.typography.labelLarge, color = fg)
+        if (s.canSwitchCaisse) {
+            Spacer(Modifier.width(Dimens.s))
+            Icon(Icons.Outlined.SwapHoriz, contentDescription = "Changer de caisse", tint = fg, modifier = Modifier.size(20.dp))
         }
     }
 }
 
 @Composable
-private fun Clock() {
+private fun clockText(): String {
     val format = remember { DateTimeFormatter.ofPattern("EEEE d MMMM · HH:mm", Locale.FRANCE) }
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     LaunchedEffect(Unit) {
@@ -173,7 +172,7 @@ private fun Clock() {
             delay(1_000L * (60 - now.second).coerceAtLeast(1))
         }
     }
-    Text(now.format(format).replaceFirstChar { it.titlecase(Locale.FRANCE) }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    return now.format(format).replaceFirstChar { it.titlecase(Locale.FRANCE) }
 }
 
 private fun Section.icon(): ImageVector = when (this) {
@@ -189,40 +188,37 @@ private fun Section.icon(): ImageVector = when (this) {
 private fun Tiles(sections: List<Section>, onOpen: (Section) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 300.dp),
-        horizontalArrangement = Arrangement.spacedBy(20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-        contentPadding = PaddingValues(bottom = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(Dimens.m),
+        verticalArrangement = Arrangement.spacedBy(Dimens.m),
+        contentPadding = PaddingValues(bottom = Dimens.l),
     ) {
         items(sections, key = { it.name }) { section ->
             Card(
                 onClick = { onOpen(section) },
-                shape = RoundedCornerShape(18.dp),
+                shape = Dimens.cardShape,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, hoveredElevation = 5.dp),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 184.dp).pointerHoverIcon(PointerIcon.Hand),
             ) {
-                Column(Modifier.fillMaxWidth().padding(24.dp)) {
+                Column(Modifier.fillMaxWidth().padding(Dimens.l)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(60.dp),
+                        Box(
+                            Modifier.size(56.dp).clip(Dimens.shape).background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center,
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(section.icon(), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp))
-                            }
+                            Icon(section.icon(), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
                         }
                         Spacer(Modifier.weight(1f))
                         section.comesIn?.let {
-                            Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
-                                Text("Étape $it", modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Surface(shape = Dimens.shape, color = MaterialTheme.colorScheme.surfaceContainer) {
+                                Text("Étape $it", Modifier.padding(horizontal = Dimens.sm, vertical = Dimens.xs), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(Dimens.m))
                     Text(section.title, style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.height(4.dp))
-                    Text(section.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(Dimens.xs))
+                    Text(section.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -231,17 +227,18 @@ private fun Tiles(sections: List<Section>, onOpen: (Section) -> Unit) {
 
 @Composable
 private fun NoCaisseDialog(canChoose: Boolean, onChoose: () -> Unit, onClose: () -> Unit) {
-    Dialog(onDismissRequest = onClose) {
-        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.width(460.dp).padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Pas de caisse", style = MaterialTheme.typography.titleLarge)
-                Text(if (canChoose) "Ce compte n'a pas encore de caisse. Choisissez la caisse de ce comptoir." else NO_CAISSE_MESSAGE)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.align(Alignment.End)) {
-                    TextButton(onClick = onClose) { Text("Fermer") }
-                    if (canChoose) Button(onClick = onChoose) { Text("Choisir une caisse") }
-                }
-            }
-        }
+    AppDialog(
+        "Pas de caisse",
+        onDismiss = onClose,
+        actions = {
+            AppButton("Fermer", onClose, kind = ButtonKind.SECONDARY)
+            if (canChoose) AppButton("Choisir une caisse", onChoose)
+        },
+    ) {
+        Text(
+            if (canChoose) "Ce compte n'a pas encore de caisse. Choisissez la caisse de ce comptoir." else NO_CAISSE_MESSAGE,
+            style = MaterialTheme.typography.bodyLarge,
+        )
     }
 }
 
@@ -254,41 +251,37 @@ private fun CaissePicker(
     onChoose: (TerminalDto) -> Unit,
     onClose: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onClose) {
-        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.width(520.dp).heightIn(max = 620.dp).padding(28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("Choisir la caisse", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "La caisse du compte : son menu, son tiroir et sa session de caisse. Ce choix reste sur le compte.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                when (state) {
-                    UiState.Loading -> Box(Modifier.height(160.dp)) { LoadingBox() }
-                    is UiState.Error -> Banner(Tone.DANGER, state.message, detail = state.hint)
-                    is UiState.Success -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (state.data.isEmpty()) Text("Aucune caisse active dans cette succursale.")
-                        state.data.forEach { t ->
-                            val selected = t.id == current
-                            Card(
-                                onClick = { if (!switching) onChoose(t) },
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
-                                ),
-                                modifier = Modifier.fillMaxWidth().height(64.dp),
-                            ) {
-                                Row(Modifier.fillMaxSize().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Outlined.Storefront, contentDescription = null)
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(t.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                                    if (selected) Text("Actuelle", color = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                        }
+    AppDialog(
+        "Choisir la caisse",
+        onDismiss = onClose,
+        dismissible = !switching,
+        subtitle = "La caisse du compte : son menu, son tiroir et sa session de caisse. Ce choix reste sur le compte.",
+        actions = { AppButton("Fermer", onClose, kind = ButtonKind.SECONDARY, enabled = !switching) },
+    ) {
+        when (state) {
+            UiState.Loading -> Box(Modifier.fillMaxWidth().height(120.dp)) { LoadingBox() }
+            is UiState.Error -> Banner(Tone.DANGER, state.message, detail = state.hint)
+            is UiState.Success -> Column(verticalArrangement = Arrangement.spacedBy(Dimens.s)) {
+                if (state.data.isEmpty()) Text("Aucune caisse active dans cette succursale.", style = MaterialTheme.typography.bodyLarge)
+                state.data.forEach { t ->
+                    val selected = t.id == current
+                    Row(
+                        Modifier.fillMaxWidth().height(Dimens.primary).clip(Dimens.shape)
+                            .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                            .border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, Dimens.shape)
+                            .clickable(enabled = !switching) { onChoose(t) }
+                            .pointerHoverIcon(PointerIcon.Hand)
+                            .padding(horizontal = Dimens.m),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Outlined.Storefront, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(Dimens.sm))
+                        Text(t.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        if (selected) Text("Actuelle", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     }
                 }
-                error?.let { Banner(Tone.DANGER, it) }
-                TextButton(onClick = onClose, enabled = !switching, modifier = Modifier.align(Alignment.End)) { Text("Fermer") }
             }
         }
+        error?.let { Banner(Tone.DANGER, it) }
     }
 }

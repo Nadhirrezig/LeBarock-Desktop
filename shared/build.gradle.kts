@@ -28,6 +28,7 @@ kotlin {
             implementation(libs.retrofit.kotlinxSerialization)
             implementation(libs.okhttp)
             implementation(libs.okhttp.logging)
+            implementation(libs.jna.platform)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

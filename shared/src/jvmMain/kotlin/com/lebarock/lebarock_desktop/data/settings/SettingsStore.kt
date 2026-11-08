@@ -4,6 +4,7 @@ import com.lebarock.lebarock_desktop.data.AppLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -27,9 +28,91 @@ data class CurrencyInfo(
     val decimals: Int = 3,
 )
 
+/** Réglages → « Impression des tickets » (as on the handheld): who prints this PC's bills and receipts. */
+@Serializable
+enum class PrintTarget(val apiValue: String, val label: String, val hint: String) {
+    /** This PC prints its own tickets on its printer (the caisse sends the ticket's content). */
+    @SerialName("device")
+    DEVICE("device", "Sur cet appareil", "L'imprimante de ce poste, réglée ci-dessous."),
+
+    /** The caisse prints on the printer of the signed-in account's Caisse. */
+    @SerialName("caisse")
+    CAISSE("caisse", "Imprimante de la caisse", "L'imprimante de la caisse du compte connecté, réglée sur la caisse."),
+}
+
+@Serializable
+enum class PrinterConnection(val label: String) {
+    @SerialName("usb")
+    USB("USB (Windows)"),
+
+    @SerialName("network")
+    NETWORK("Ethernet (réseau)"),
+}
+
+/** This PC's ticket printer. */
+@Serializable
+data class PrinterConfig(
+    val target: PrintTarget = PrintTarget.DEVICE,
+    val connection: PrinterConnection = PrinterConnection.USB,
+    /** USB: the printer's name in Windows (Paramètres → Imprimantes). */
+    val windowsPrinter: String = "",
+    /** Ethernet: the printer's own IP address and raw port (9100). */
+    val host: String = "",
+    val port: Int = 9100,
+    val paperMm: Int = 80,
+    val charset: com.lebarock.lebarock_desktop.print.TicketCharset = com.lebarock.lebarock_desktop.print.TicketCharset.CP858,
+) {
+    /** What is missing before a ticket can print, or null. */
+    val problem: String?
+        get() = when (connection) {
+            PrinterConnection.USB -> if (windowsPrinter.isBlank()) "Choisissez l'imprimante Windows du comptoir." else null
+            PrinterConnection.NETWORK -> when {
+                host.isBlank() -> "Saisissez l'adresse IP de l'imprimante."
+                port !in 1..65535 -> "Le port de l'imprimante va de 1 à 65535 (habituellement 9100)."
+                else -> null
+            }
+        }
+
+    val label: String
+        get() = when (connection) {
+            PrinterConnection.USB -> windowsPrinter.ifBlank { "—" } + " (USB)"
+            PrinterConnection.NETWORK -> "$host:$port (Ethernet)"
+        }
+}
+
+/** A printer of the caisse's branch, as the print agent's set-up listed it. */
+@Serializable
+data class AgentPrinter(
+    val id: Long,
+    val name: String,
+    val choice: String? = null,
+    val active: Boolean = true,
+    val caisses: List<String> = emptyList(),
+) {
+    val isDirecte: Boolean get() = choice == "directPrint"
+}
+
+/**
+ * Impression « Directe »: this PC collects the caisse's tickets for [printerId] and prints them
+ * on its own printer. [keySealed] is the branch key, encrypted for this Windows account
+ * (SecretBox); it is never shown.
+ */
+@Serializable
+data class AgentConfig(
+    val enabled: Boolean = false,
+    val keySealed: String? = null,
+    val branchName: String = "",
+    val printerId: Long? = null,
+    val printers: List<AgentPrinter> = emptyList(),
+) {
+    val configured: Boolean get() = keySealed != null
+    val printer: AgentPrinter? get() = printers.firstOrNull { it.id == printerId }
+}
+
 /**
  * This PC's settings (`settings.json` in the data folder). A device setting: kept across
- * sign-ins and account changes. No password, token or key is ever stored here.
+ * sign-ins and account changes. No password or token is ever stored here; the print agent's
+ * branch key only encrypted for this Windows account ([AgentConfig.keySealed]).
  */
 @Serializable
 data class AppSettings(
@@ -42,6 +125,10 @@ data class AppSettings(
     val accounts: List<CachedAccount> = emptyList(),
     /** The last account signed in on this PC, shown first in the list. */
     val lastUserId: Long? = null,
+    val printer: PrinterConfig = PrinterConfig(),
+    val agent: AgentConfig = AgentConfig(),
+    /** Start AltosPOS (in the tray) when Windows starts; null = not decided yet (set on at first start). */
+    val startWithWindows: Boolean? = null,
 ) {
     companion object {
         const val DEFAULT_IDLE_MINUTES = 5

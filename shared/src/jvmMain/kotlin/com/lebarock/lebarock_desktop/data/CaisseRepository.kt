@@ -6,6 +6,7 @@ import com.lebarock.lebarock_desktop.data.remote.ApiClient
 import com.lebarock.lebarock_desktop.data.remote.AltosApi
 import com.lebarock.lebarock_desktop.data.remote.LoginRequest
 import com.lebarock.lebarock_desktop.data.remote.PingData
+import com.lebarock.lebarock_desktop.data.remote.PrintAgentDto
 import com.lebarock.lebarock_desktop.data.remote.SwitchTerminalRequest
 import com.lebarock.lebarock_desktop.data.remote.TerminalDto
 import com.lebarock.lebarock_desktop.data.settings.AppSettings
@@ -160,6 +161,29 @@ class CaisseRepository(
         sessions.updateUser(user)
         sessions.current ?: throw ApiFailure("Session expirée : reconnectez-vous.", FailureKind.SESSION_EXPIRED)
     }.onSuccess { AppLog.info("Caisse choisie : ${it.caisse?.name}") }
+
+    // ---- Impression « Directe » (print agent) ----
+
+    /**
+     * An administrator signs in once for this PC's print agent: a session opened only for this
+     * (its own token, ended right after), never the counter's session. Returns the branch key and
+     * the printers; 403 when the account may not manage settings.
+     */
+    suspend fun fetchPrintAgentAccess(userId: Long, password: String): Result<PrintAgentDto> = try {
+        val api = api()
+        val login = api.login(LoginRequest(userId = userId, password = password, deviceName = AppInfo.DEVICE_NAME + "-agent")).data
+            ?: throw ApiFailure("Réponse inattendue de la caisse.", FailureKind.NOT_A_CAISSE)
+        val bearer = "Bearer ${login.token}"
+        try {
+            val access = api.printAgent(bearer).data ?: throw ApiFailure("Réponse inattendue de la caisse.", FailureKind.NOT_A_CAISSE)
+            AppLog.info("Impression Directe : clé reçue (compte #$userId, succursale ${access.branch.name})")
+            Result.success(access)
+        } finally {
+            runCatching { api.logoutAs(bearer) }
+        }
+    } catch (e: Exception) {
+        Result.failure(ApiFailure.from(e, settings.current.server.https))
+    }
 
     val settingsNow: AppSettings get() = settings.current
 }

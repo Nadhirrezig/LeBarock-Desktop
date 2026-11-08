@@ -493,3 +493,28 @@ data class BillRequest(
     @SerialName("print_target") val printTarget: String? = null,
 )
 
+
+// ---- Step 4, D2: the desktop's "Directe" print agent ----
+
+@Serializable
+data class PrintAgentDto(
+    val key: String,
+    val branch: PrintAgentBranchDto = PrintAgentBranchDto(),
+    val printers: List<PrintAgentPrinterDto> = emptyList(),
+)
+
+@Serializable
+data class PrintAgentBranchDto(
+    val id: Long = 0,
+    val name: String = "",
+)
+
+@Serializable
+data class PrintAgentPrinterDto(
+    val id: Long,
+    val name: String = "",
+    @SerialName("printing_choice") val printingChoice: String? = null,
+    @SerialName("print_format") val printFormat: String? = null,
+    val active: Boolean = true,
+    val caisses: List<String> = emptyList(),
+)

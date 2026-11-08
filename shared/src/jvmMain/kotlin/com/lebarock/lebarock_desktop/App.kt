@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.lebarock.lebarock_desktop.ui.common.AppButton
 import com.lebarock.lebarock_desktop.ui.common.rememberScreenModel
 import com.lebarock.lebarock_desktop.ui.home.HomeModel
 import com.lebarock.lebarock_desktop.ui.home.HomeScreen
@@ -36,6 +37,7 @@ import com.lebarock.lebarock_desktop.ui.login.LoginModel
 import com.lebarock.lebarock_desktop.ui.login.LoginScreen
 import com.lebarock.lebarock_desktop.ui.navigation.Navigator
 import com.lebarock.lebarock_desktop.ui.navigation.Screen
+import com.lebarock.lebarock_desktop.ui.settings.PrintingModel
 import com.lebarock.lebarock_desktop.ui.settings.SettingsModel
 import com.lebarock.lebarock_desktop.ui.settings.SettingsScreen
 import com.lebarock.lebarock_desktop.ui.theme.AltosTheme
@@ -63,6 +65,17 @@ fun App(container: AppContainer) {
             } else if (hadSession) {
                 hadSession = false
                 if (navigator.current !is Screen.Login) navigator.reset(Screen.Login("Session expirée : reconnectez-vous."))
+            }
+        }
+
+        // The window went to the tray: the session ends (shared counter), the sign-in waits behind.
+        LaunchedEffect(Unit) {
+            container.lockRequests.collect { reason ->
+                if (container.sessions.current != null) {
+                    hadSession = false
+                    container.repository.logout(reason)
+                    navigator.reset(Screen.Login("Session fermée quand la fenêtre a été fermée."))
+                }
             }
         }
 
@@ -94,7 +107,14 @@ fun App(container: AppContainer) {
                             navigator.reset(Screen.Login())
                         }
                     }
-                    SettingsScreen(model, canGoBack = navigator.canGoBack, onBack = navigator::back)
+                    val printing = if (screen.firstRun) {
+                        null
+                    } else {
+                        rememberScreenModel(screen to "printing") {
+                            PrintingModel(container.settings, container.repository, container.ticketPrinter, container.secrets, container.agentClient, container.printAgent)
+                        }
+                    }
+                    SettingsScreen(model, printing, canGoBack = navigator.canGoBack, onBack = navigator::back)
                 }
                 is Screen.Login -> {
                     val model = rememberScreenModel(screen to settings.server.baseUrl) {
@@ -134,7 +154,7 @@ fun App(container: AppContainer) {
 private fun IdleWarning(leftMillis: Long, onStay: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.padding(24.dp).widthIn(max = 760.dp).fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = com.lebarock.lebarock_desktop.ui.theme.Dimens.cardShape,
         color = WarningContainer,
         shadowElevation = 8.dp,
     ) {
@@ -147,7 +167,7 @@ private fun IdleWarning(leftMillis: Long, onStay: () -> Unit, modifier: Modifier
                 color = Color(0xFF78350F),
                 modifier = Modifier.weight(1f),
             )
-            Button(onClick = onStay) { Text("Rester connecté") }
+            AppButton("Rester connecté", onStay)
         }
     }
 }

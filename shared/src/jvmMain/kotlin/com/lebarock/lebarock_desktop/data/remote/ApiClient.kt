@@ -40,10 +40,12 @@ class ApiClient(
             .writeTimeout(25, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val token = tokenProvider()
-                val request = chain.request().newBuilder()
+                val original = chain.request()
+                val request = original.newBuilder()
                     .header("Accept", "application/json")
                     .header("User-Agent", "${AppInfo.NAME}-Desktop/${AppInfo.version}")
-                    .apply { if (!token.isNullOrBlank()) header("Authorization", "Bearer $token") }
+                    // A call that brings its own token (the print agent's admin sign-in) keeps it.
+                    .apply { if (!token.isNullOrBlank() && original.header("Authorization") == null) header("Authorization", "Bearer $token") }
                     .build()
                 chain.proceed(request)
             }
@@ -54,6 +56,27 @@ class ApiClient(
     fun reloadTrust() {
         http = build()
         cached = null
+    }
+
+    /**
+     * The HTTP client of the print agent: same trust and timeouts, but never the signed-in
+     * account's token (the agent works with the branch key, whoever is signed in).
+     */
+    fun agentHttp(): OkHttpClient {
+        val trust = trustManagerFactory()
+        return OkHttpClient.Builder()
+            .sslSocketFactory(TrustStore.sslContext(trust).socketFactory, trust)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("Accept", "application/json")
+                        .header("User-Agent", "${AppInfo.NAME}-Desktop/${AppInfo.version}")
+                        .build(),
+                )
+            }
+            .build()
     }
 
     /** The service for [baseUrl] (cached per address). */

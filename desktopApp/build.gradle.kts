@@ -36,7 +36,8 @@ compose.desktop {
             // TLS with ECDHE needs jdk.crypto.ec on Java 21; the Windows certificate store
             // (mkcert's root CA installed in Windows) is read through jdk.crypto.mscapi,
             // which only exists in a Windows JDK.
-            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported")
+            // jdk.charsets: the PC858 code page of the ticket printer (IBM00858).
+            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported", "jdk.charsets")
             if (isWindows) modules("jdk.crypto.mscapi")
 
             windows {

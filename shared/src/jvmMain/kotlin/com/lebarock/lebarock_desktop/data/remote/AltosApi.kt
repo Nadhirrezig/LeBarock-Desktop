@@ -3,6 +3,7 @@ package com.lebarock.lebarock_desktop.data.remote
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -25,6 +26,14 @@ interface AltosApi {
 
     @POST("api/mobile/logout")
     suspend fun logout(): Envelope<Unit?>
+
+    /** Ends a session opened only for one call (the print agent's admin sign-in). */
+    @POST("api/mobile/logout")
+    suspend fun logoutAs(@Header("Authorization") bearer: String): Envelope<Unit?>
+
+    /** The branch key and printers for the "Directe" print agent ("Manage Settings" only). */
+    @GET("api/mobile/desktop/print-agent")
+    suspend fun printAgent(@Header("Authorization") bearer: String): Envelope<PrintAgentDto>
 
     @GET("api/mobile/me")
     suspend fun me(): Envelope<UserDto>

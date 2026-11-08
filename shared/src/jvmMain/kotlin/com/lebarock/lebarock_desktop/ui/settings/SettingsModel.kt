@@ -7,6 +7,7 @@ import com.lebarock.lebarock_desktop.AppInfo
 import com.lebarock.lebarock_desktop.data.ApiFailure
 import com.lebarock.lebarock_desktop.data.AppLog
 import com.lebarock.lebarock_desktop.data.CaisseRepository
+import com.lebarock.lebarock_desktop.data.WindowsStartup
 import com.lebarock.lebarock_desktop.data.ConnectionCheck
 import com.lebarock.lebarock_desktop.data.FailureKind
 import com.lebarock.lebarock_desktop.data.remote.ApiClient
@@ -63,6 +64,13 @@ class SettingsModel(
         private set
 
     var certificates by mutableStateOf(TrustStore.imported())
+        private set
+
+    /** Réglages → Application → "Démarrer avec Windows" (installed app only). */
+    val startupAvailable: Boolean get() = WindowsStartup.available
+    var startWithWindows by mutableStateOf(WindowsStartup.isOn())
+        private set
+    var startupError by mutableStateOf<String?>(null)
         private set
     var certNotice by mutableStateOf<Pair<Boolean, String>?>(null)
         private set
@@ -195,6 +203,22 @@ class SettingsModel(
         certificates = TrustStore.imported()
         certNotice = true to "Certificat retiré."
     }
+
+    fun onStartWithWindows(on: Boolean) {
+        WindowsStartup.set(on).fold(
+            onSuccess = {
+                startWithWindows = on
+                startupError = null
+                settings.update { it.copy(startWithWindows = on) }
+            },
+            onFailure = { startupError = it.message ?: "Réglage impossible." },
+        )
+    }
+
+    /** Whether "Enregistrer" has something to save (what is typed differs from what is saved). */
+    val serverChanged: Boolean
+        get() = runCatching { ServerAddress(https = https, host = host.trim(), port = port.trim().toInt()) }.getOrNull() != savedAddress ||
+            !savedAddress.isConfigured
 
     /** Opens a folder in Windows' file explorer. */
     fun open(folder: File) {

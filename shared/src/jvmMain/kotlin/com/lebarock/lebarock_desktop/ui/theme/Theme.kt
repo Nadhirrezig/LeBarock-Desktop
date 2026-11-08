@@ -3,7 +3,12 @@ package com.lebarock.lebarock_desktop.ui.theme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.foundation.LocalScrollbarStyle
+import androidx.compose.foundation.ScrollbarStyle
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -52,15 +57,21 @@ private val Colors = lightColorScheme(
     errorContainer = DangerContainer,
 )
 
-// A counter screen read from arm's length: one step larger than Material's defaults.
+/**
+ * A counter screen read from arm's length: one step larger than Material's defaults, and
+ * nothing below 14 sp (client, 2026-11-08: help text was too small to read).
+ */
 private val CounterTypography = Typography().let { base ->
     base.copy(
-        headlineSmall = base.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-        titleLarge = base.titleLarge.copy(fontWeight = FontWeight.SemiBold, fontSize = 24.sp),
-        titleMedium = base.titleMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 18.sp),
-        bodyLarge = base.bodyLarge.copy(fontSize = 17.sp),
-        bodyMedium = base.bodyMedium.copy(fontSize = 15.sp),
-        labelLarge = base.labelLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
+        headlineSmall = base.headlineSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 32.sp),
+        titleLarge = base.titleLarge.copy(fontWeight = FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 28.sp),
+        titleMedium = base.titleMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 18.sp, lineHeight = 24.sp),
+        bodyLarge = base.bodyLarge.copy(fontSize = 16.sp, lineHeight = 22.sp),
+        bodyMedium = base.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
+        bodySmall = base.bodySmall.copy(fontSize = 14.sp, lineHeight = 19.sp),
+        labelLarge = base.labelLarge.copy(fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold),
+        labelMedium = base.labelMedium.copy(fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold),
+        labelSmall = base.labelSmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
     )
 }
 
@@ -69,7 +80,20 @@ private val CounterTypography = Typography().let { base ->
  */
 @Composable
 fun AltosTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = Colors, typography = CounterTypography, content = content)
+    MaterialTheme(colorScheme = Colors, typography = CounterTypography) {
+        // A scrollbar wide enough to see and to grab with a finger.
+        CompositionLocalProvider(
+            LocalScrollbarStyle provides ScrollbarStyle(
+                minimalHeight = 48.dp,
+                thickness = 10.dp,
+                shape = RoundedCornerShape(5.dp),
+                hoverDurationMillis = 300,
+                unhoverColor = Color.Black.copy(alpha = 0.22f),
+                hoverColor = Color.Black.copy(alpha = 0.45f),
+            ),
+            content = content,
+        )
+    }
 }
 
 val Mono = TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)

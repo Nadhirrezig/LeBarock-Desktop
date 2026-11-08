@@ -110,8 +110,8 @@ fun Banner(
         Tone.DANGER -> Triple(Danger, DangerContainer, Icons.Outlined.ErrorOutline)
         Tone.INFO -> Triple(Info, InfoContainer, Icons.Outlined.Info)
     }
-    Surface(color = bg, shape = RoundedCornerShape(10.dp), modifier = modifier.fillMaxWidth()) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Surface(color = bg, shape = com.lebarock.lebarock_desktop.ui.theme.Dimens.shape, modifier = modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(24.dp))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -160,7 +160,7 @@ fun ErrorBox(message: String, hint: String?, onRetry: (() -> Unit)?, modifier: M
         }
         Spacer(Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (onRetry != null) Button(onClick = onRetry) { Text("Réessayer") }
+            if (onRetry != null) AppButton("Réessayer", onRetry)
             extra?.invoke()
         }
     }
@@ -178,38 +178,5 @@ fun Initials(name: String, seed: Long, size: Dp = 56.dp) {
         .joinToString("") { it.first().uppercase() }.ifEmpty { "?" }
     Box(Modifier.size(size).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
         Text(letters, color = Color.White, style = MaterialTheme.typography.titleMedium)
-    }
-}
-
-/** A titled white card of the Réglages page. */
-@Composable
-fun SectionCard(
-    title: String,
-    icon: ImageVector,
-    modifier: Modifier = Modifier,
-    subtitle: String? = null,
-    content: @Composable () -> Unit,
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        shadowElevation = 1.dp,
-    ) {
-        Column(Modifier.padding(24.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
-                    if (subtitle != null) {
-                        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-            Spacer(Modifier.height(18.dp))
-            content()
-        }
     }
 }

@@ -123,10 +123,21 @@ class CaisseRepositoryTest {
 
     @Test
     fun https_to_a_plain_http_port_is_explained() = runBlocking<Unit> {
-        val s = server()
-        s.enqueue(json(ping))
-        val failure = repository.testConnection(addressOf(s, https = true)).exceptionOrNull() as ApiFailure
-        assertEquals(FailureKind.HTTPS_TO_HTTP_PORT, failure.kind)
+        // A web server on a plain HTTP port answers a TLS hello at once with HTTP text (as nginx does).
+        java.net.ServerSocket(0).use { plain ->
+            val answering = kotlin.concurrent.thread {
+                runCatching {
+                    plain.accept().use { socket ->
+                        socket.getInputStream().read(ByteArray(512))
+                        socket.getOutputStream().write("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                        socket.getOutputStream().flush()
+                    }
+                }
+            }
+            val failure = repository.testConnection(ServerAddress(true, "127.0.0.1", plain.localPort)).exceptionOrNull() as ApiFailure
+            answering.join(2_000)
+            assertEquals(FailureKind.HTTPS_TO_HTTP_PORT, failure.kind, failure.message)
+        }
     }
 
     @Test

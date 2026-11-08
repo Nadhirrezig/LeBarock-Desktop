@@ -212,11 +212,12 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   bundled with the app (`resources/item/*.svg`, copied from the caisse's `public/img`), tried again after a minute.
   Card (`ItemCard`): the photo in a square (cropped, as `object-cover`), the item type's badge at the top left (veg,
   non-veg, egg, drink; none for « other », which has no icon on the web either), « ÉPUISÉ » over the darkened photo,
-  the name on two lines and the price in a green pill with its currency (« 55.000 DT »), or « Voir les variations »;
-  **one card size, 158 dp, whatever the window** (client, 2026-11-08: the grid used to stretch its columns, so at 125 %
-  3 cards grew to ~195 dp where 4 did not fit): as many columns as fit (5 at 1366 × 768, 3 at 125 %, 8 at 1920), the
-  row centred (`GridCells.FixedSize`). Compared with the web POS in a browser at 1366 × 768: same columns, photo, icon,
-  badge, pill.
+  the name on two lines and the price in a green pill with its currency (« 55.000 DT », 14 sp, never cut), or « Voir les
+  variations »; **the cards fill the row edge to edge, as close to 158 dp as the width allows** (`NearSizeCells`; client,
+  2026-11-08: a grid that stretched the columns that fit made 3 cards of ~195 dp at 125 %, a fixed size left gaps beside
+  the row): from the search box's left edge to the scrollbar, the number of columns whose card width is nearest 158 dp
+  (5 of ~158 at 1366 × 768, 4 of ~143 at 125 %, 8 of ~164 at 1920). Compared with the web POS in a browser at
+  1366 × 768: same columns, photo, icon, badge, pill.
 - Tests: 67 (+ `ItemImagesTest` 5: the URL put on the server of Réglages, the food icon without a call, a photo
   fetched once then kept, a photo that does not come falls back and is tried again after a minute, no badge for
   « other »; `PosDataTest` 9: amounts as the caisse writes them, cart merging / « − » / notes, the web's totals,
@@ -279,3 +280,6 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
 - 2026-11-08 — Client: the Couscous cards looked bigger in the 125 % screenshot. Cause: the grid stretched its columns to
   fill the width (3 × ~195 dp at 125 % against 5 × 158 dp at 1366). Fixed: one card size (158 dp), the number of columns
   follows the width, the row centred; checked at 1366 × 768 and 1093 × 614.
+- 2026-11-08 — Client: "still wrong" (the centred row left gaps on both sides). Now the cards fill the row from the search
+  box to the scrollbar, their number chosen so each is nearest 158 dp (4 at 125 %, 5 at 1366); the price pill no longer
+  loses « DT » on the narrower cards. Checked at 1366 × 768 and 1093 × 614. 67 desktop tests.

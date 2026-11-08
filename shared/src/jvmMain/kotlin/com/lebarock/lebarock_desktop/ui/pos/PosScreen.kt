@@ -246,11 +246,10 @@ private fun ItemGrid(items: List<MenuItemDto>, currency: CurrencyInfo, images: I
     val state = rememberLazyGridState()
     Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
-            // One card size whatever the window (client, 2026-11-08: the cards grew from 158 to ~195 dp at 125 %, when
-            // the grid stretched 3 columns over the width 4 did not fit): as many columns as fit, the row centred.
-            columns = GridCells.FixedSize(ITEM_CARD_WIDTH),
+            // Edge to edge, cards as close to one size as the width allows (client, 2026-11-08): see NearSizeCells.
+            columns = NearSizeCells(ITEM_CARD_WIDTH),
             state = state,
-            horizontalArrangement = Arrangement.spacedBy(Dimens.sm, Alignment.CenterHorizontally),
+            horizontalArrangement = Arrangement.spacedBy(Dimens.sm),
             verticalArrangement = Arrangement.spacedBy(Dimens.sm),
             contentPadding = PaddingValues(end = Dimens.m, bottom = Dimens.m),
             modifier = Modifier.fillMaxSize(),
@@ -261,8 +260,36 @@ private fun ItemGrid(items: List<MenuItemDto>, currency: CurrencyInfo, images: I
     }
 }
 
-/** The item cards' one width (as at 1366 × 768: 5 per row; 3 at 125 %, 8 at 1920). */
+/** The item cards' target width. */
 private val ITEM_CARD_WIDTH = 158.dp
+
+/**
+ * The item grid's columns (client, 2026-11-08): the cards fill the row from the search box's left edge to the scrollbar,
+ * and the number of columns is the one whose card width is closest to [target] — 5 at 1366 × 768 (~167 dp), 4 at 125 %
+ * (~143 dp), 8 at 1920 (~164 dp). A grid that only takes the columns that fit and stretches them made 3 cards of
+ * ~195 dp at 125 %; a fixed size left gaps beside the row.
+ */
+private class NearSizeCells(private val target: androidx.compose.ui.unit.Dp) : GridCells {
+    override fun androidx.compose.ui.unit.Density.calculateCrossAxisCellSizes(availableSize: Int, spacing: Int): List<Int> {
+        val wanted = target.roundToPx()
+        var columns = 1
+        var bestGap = Int.MAX_VALUE
+        for (n in 1..24) {
+            val size = (availableSize - spacing * (n - 1)) / n
+            if (size <= 0) break
+            val gap = kotlin.math.abs(size - wanted)
+            if (gap < bestGap) {
+                bestGap = gap
+                columns = n
+            }
+        }
+        val room = availableSize - spacing * (columns - 1)
+        return List(columns) { room / columns + if (it < room % columns) 1 else 0 }
+    }
+
+    override fun equals(other: Any?) = other is NearSizeCells && other.target == target
+    override fun hashCode() = target.hashCode()
+}
 
 /**
  * The web POS's item card (`pos/menu`): the photo in a square (the food icon when the item has none), the item
@@ -298,7 +325,8 @@ private fun ItemCard(item: MenuItemDto, currency: CurrencyInfo, images: ItemImag
                 }
             }
         }
-        Column(Modifier.fillMaxWidth().padding(horizontal = Dimens.sm, vertical = Dimens.s)) {
+        // The web's px-2.5: 10 dp a side, so the price fits whole in the narrowest card (~143 dp at 125 %).
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = Dimens.s)) {
             Text(
                 item.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
                 maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis,
@@ -308,7 +336,7 @@ private fun ItemCard(item: MenuItemDto, currency: CurrencyInfo, images: ItemImag
                 Spacer(Modifier.height(Dimens.xs))
                 if (item.variations.isEmpty()) {
                     // As the web card: the price with the currency (« 55.000 DT »).
-                    Pill(Money.format(item.price, currency), Success, SuccessContainer, large = true)
+                    PricePill(Money.format(item.price, currency))
                 } else {
                     Text("Voir les variations", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium, modifier = Modifier.height(28.dp))
                 }
@@ -629,6 +657,18 @@ internal fun IconBox(
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = description, tint = if (!enabled) MaterialTheme.colorScheme.outline else if (highlighted) MaterialTheme.colorScheme.primary else tint)
+    }
+}
+
+/** The card's price, in the web's green pill: bold 14 sp, whole on one line (« 110.000 DT » fits a 143 dp card). */
+@Composable
+private fun PricePill(text: String) {
+    Surface(shape = Dimens.shape, color = SuccessContainer) {
+        Text(
+            text, Modifier.padding(horizontal = 6.dp, vertical = Dimens.xs),
+            style = MaterialTheme.typography.titleSmall, color = Success, fontWeight = FontWeight.ExtraBold,
+            maxLines = 1, softWrap = false,
+        )
     }
 }
 

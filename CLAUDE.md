@@ -91,6 +91,12 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   the handheld's cancel too (it used to delete the order); the caisse's thermal bill date fixed in the same step.
 - **Item photos (client, 2026-11-08):** "do like the web": a photo on each item card, the web's food icon for an item
   without one, square cards as on the web.
+- **D4 (client, 2026-11-08):** the floor **looks like the web's Tables page** (full-colour tiles, area tabs, legend);
+  an **occupied table opens the POS on its check, like the web** (the check's actions live in that POS's order panel
+  and in Commandes); a **free table asks its covers and opens the POS — nothing is recorded on the caisse until
+  « Envoyer »**; the floor refreshes **every 15 s, like the web** (and at once after an action, and when coming back).
+- **Window sizes (client, 2026-11-08):** the counter PC stays at **100 %**. The 125 % size is still checked as the
+  responsive case ("not a bug, it is how the responsiveness should act"); 100 % is the reference.
 
 ## How D1 is built (2026-11-08)
 
@@ -232,14 +238,56 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   (kept « Annulée »), the Caissier had no cancel button. Not checked here: a round held by the stock (stock off
   locally; covered by the tests), on a real Windows screen.
 
+## How D4 is built (2026-11-08)
+
+- **Data:** `GET /tables` read with what a web tile shows (`TableDto`: open checks + total, `ready_tickets`,
+  `stock_waiting`, `next_reservation`, `session.merged_into`); the order detail with `charges`, `payments`,
+  `customer_info`, `items[].fired`. `OrdersRepository`: `moveOrder`, `mergeOrder`, `splitOrder`, `setWaiter`,
+  `customers`, `setCustomer`, `removeCharge`, `changePaymentMethod`, `markReviewed`, `releaseTable` →
+  `CheckChange(order, message, newOrder)` (the caisse's French message shown as is).
+- **Tables** (`ui/tables/TablesModel`, `TablesScreen`; Accueil tile « Tables / salle »): « Toutes les salles » + one
+  tab per area, the web's legend (Libre green, Occupée blue, Addition demandée amber, Réservée red), per area « Salle ·
+  8 tables » and full-colour tiles: code, places, state chip (« Avec 1 » for a merged table), « 4 couv. · depuis
+  25 min » (« à l'instant »), « #5 · 2 tickets cuisine » or « 2 tickets » + total, « Résa 21:00 · Client · 4 pers. »,
+  « En attente de stock », badges « Prêt n » (top left) and « QR n » (top right). The web's grid: tiles ≥ 260 dp, 4 a
+  row at 1366 × 768, 3 at 125 %, **the tiles of a row share one height** (CSS grid rows). A tap: occupied → POS on its
+  check; merged → the host table's check; seated with nothing ordered (web, handheld) → POS with its covers, and
+  « Commander » / « Libérer » on the tile (confirm); free / reserved → « Nombre de couverts » (−, +, 1 by default) →
+  POS on that table. Refresh every 15 s, « Actualiser », « À jour · il y a 12 s ».
+- **POS from the floor:** `Screen.Pos(orderId | table + covers)`; once the round is sent or billed, or the check is
+  cancelled, the POS goes back to the floor, read again, with the message (« Commande #9 envoyée en cuisine. »).
+- **The check's actions** (`ui/check/CheckActions` + `CheckDialogs`, one piece for the POS and Commandes):
+  `CheckAction.available(order, rights)` — Changer de table / Fusionner / Séparer on a running dine-in check (orders),
+  Changer de serveur (« Choisir le serveur »), Client, Retirer des frais (open check with charges), Vérifié (offline
+  check), Annuler la commande (« Annuler une commande »). « Plus » menu: in the POS order panel's second line (next to
+  covers · serveur · client) and in Commandes' action bar (cancel stays its own red button there). Windows: tables to
+  pick (free ones for a move, seated parties for a merge; the others greyed, the check's own table framed), split with
+  − / + per line (« Créer le nouveau ticket »), waiters (the POS context's list), customer (search by name / phone /
+  e-mail from 2 characters, the search box takes the keyboard, or name + phone + e-mail typed; same phone = same
+  customer), charges with « Retirer », cancel with reasons, a line taken off (waiting for stock: anyone taking orders;
+  sent to no kitchen, a drink: « Annuler une commande »; in a kitchen: not here). The caisse's refusal stays in the
+  window. A merge answers the other table's check: the POS / Commandes follow it.
+- **Commandes:** charges in the totals, « Paiements » with « Corriger : carte / espèces » (« Encaisser » right), the
+  « Plus » menu, removable lines (same rule as the POS).
+- Tests: 75 (+ `TablesDataTest` 8: tile state and labels, who can take a check (move / merge), time seated, the
+  actions per right (waiter, manager, take-away, settled, cancelled), which line comes off, the floor JSON, each call's
+  path and body with the caisse's message, a refusal shown as the caisse wrote it).
+- Checked end to end (2026-11-08) on the packaged app with the local caisse at 1366 × 768 (and 1093 × 614): floor
+  with a ready ticket, a bill asked, a party seated with nothing ordered, a reservation; table 5 → POS → « Changer de
+  table » → 6; table 7 → « Séparer » (#8 created, « 2 tickets » on the tile); « Client » typed; free table 2 → 2 couverts
+  → POS on T2 → « Envoyer » → back on the floor; « Libérer » table 3; table 2 « Fusionner » into 1 (« Avec 1 »);
+  Commandes: a card payment corrected to cash, the waiter changed; « Annuler la commande » from the POS → back on the
+  floor, both tables free. Fixed by running it: tiles of a row had different heights, « Plus » squeezed in the order
+  header at 125 %, the customer search did not take the keyboard, « Addition demandée » cut in the pick tiles.
+
 ## Roadmap — step 4 (review approved 2026-11-08; ~17.5 days)
 
 | Step | Caisse | AltosPOS desktop | Effort | Status |
 |---|---|---|---|---|
 | D1 | Counter rights in `abilities` | Réglages (server, test, certificate, session, application), sign-in, Accueil by rights, Caisse picker, change user, idle lock, MSI "AltosPOS" | ~2 d | [x] built 2026-11-08, approved by the client |
 | D2 | Print jobs per printer; branch key endpoint; X / Z thermal ticket fix; currency format fix; « Complet / Résumé » | Style system (client's note on D1); ticket printing (USB or Ethernet), test print, « Sur cet appareil / Imprimante de la caisse », "Directe" agent, tray + start with Windows | ~4 d | [x] built 2026-11-08, client: "Great, proceed to D3" |
-| D3 | POS context, waiter right, charge taken off, cancel like the web, bill date | POS (sections in Tri order, search, web cart always visible, table picker + à emporter, send, add round, bill, waiting stock / force) and Commandes | ~3 d | [x] built 2026-11-08, client to test |
-| D4 | Table and check operations; table details | Tables with every operation | ~3.5 d | [ ] |
+| D3 | POS context, waiter right, charge taken off, cancel like the web, bill date | POS (sections in Tri order, search, web cart always visible, table picker + à emporter, send, add round, bill, waiting stock / force) and Commandes | ~3 d | [x] built 2026-11-08, client: "proceed with D4" |
+| D4 | Table and check operations; table details | Tables with every operation | ~3.5 d | [x] built 2026-11-08, client to test |
 | D5 | Discount endpoint | Encaisser: cash + change, Carte (TPE), À crédit, split, tip, discount, receipt | ~2.5 d | [ ] |
 | D6 | Cash register and expense endpoints | Caisse: open with float, cash in / out / safe drop, X, Z with count, stock panel + "Envoyer la demande au stock", dépenses | ~3.5 d | [ ] |
 | D7 | CLAUDE.md | CLAUDE.md, release MSI, branches | ~0.5 d | [ ] |
@@ -283,3 +331,10 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
 - 2026-11-08 — Client: "still wrong" (the centred row left gaps on both sides). Now the cards fill the row from the search
   box to the scrollbar, their number chosen so each is nearest 158 dp (4 at 125 %, 5 at 1366); the price pill no longer
   loses « DT » on the narrower cards. Checked at 1366 × 768 and 1093 × 614. 67 desktop tests.
+- 2026-11-08 — Client: the 125 % screenshots were the responsive case, not a bug; the counter PC stays at 100 %; keep the
+  grid as it is. Asked whether a section with more than 7 articles works: rows of 5 at 1366 × 768, same size, the list
+  scrolls (shown with « Les incontournables », 13 dishes). Checked the client's idea that the order panel changes the
+  article area: at one window size it keeps one width (420 / 460 dp by window width only), cards identical to the pixel.
+- 2026-11-08 — D4 asked first (client's answers): floor like the web; occupied table → the POS on its check, like the web;
+  free table → nothing recorded until « Envoyer »; refresh every 15 s. Built (see "How D4 is built"); caisse part in its
+  `CLAUDE.md`. 75 desktop tests; caisse suite 351 passed. Next: the client tests D4 on the counter PC; then D5 (Encaisser).

@@ -5,10 +5,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.lebarock.lebarock_desktop.data.ApiFailure
 import com.lebarock.lebarock_desktop.data.OrdersRepository
-import com.lebarock.lebarock_desktop.data.remote.CancelReasonDto
 import com.lebarock.lebarock_desktop.data.remote.OrderDetailDto
 import com.lebarock.lebarock_desktop.data.remote.OrdersResponse
 import com.lebarock.lebarock_desktop.data.session.SessionHolder
+import com.lebarock.lebarock_desktop.ui.check.CheckActions
 import com.lebarock.lebarock_desktop.ui.common.ScreenModel
 import com.lebarock.lebarock_desktop.ui.common.UiState
 import kotlinx.coroutines.channels.Channel
@@ -45,19 +45,12 @@ fun kotLabel(status: String?): String = when (status) {
     else -> status ?: ""
 }
 
-/** « Annuler la commande »: the reason picked from the list and / or typed, as on the web. */
-data class CancelForm(
-    val reasons: UiState<List<CancelReasonDto>> = UiState.Loading,
-    val reasonId: Long? = null,
-    val text: String = "",
-    val error: String? = null,
-)
-
 /**
  * Commandes (D3): today's orders with the status chips, and the selected order's detail with what
  * the counter does to it: « Nouveau ticket », the bill (with or without its ticket), a reprint, a
- * round waiting for stock sent again (or forced), a waiting line taken off, « Servi », and
- * « Annuler la commande » (kept as « Annulée » with its reason; money taken goes back first).
+ * round waiting for stock sent again (or forced) and « Servi ». Since D4 the check's other actions
+ * ([check]): table, merge, split, waiter, customer, charges, payment fix, « Vérifié », a line taken
+ * off and « Annuler la commande » (kept as « Annulée » with its reason; money taken goes back first).
  */
 class OrdersModel(
     private val orders: OrdersRepository,
@@ -81,8 +74,6 @@ class OrdersModel(
         private set
     var servingKot by mutableStateOf<Long?>(null)
         private set
-    var cancelForm by mutableStateOf<CancelForm?>(null)
-        private set
     var printProblem by mutableStateOf<String?>(null)
         private set
     var noCaisse by mutableStateOf<String?>(null)
@@ -91,12 +82,36 @@ class OrdersModel(
     val rights get() = sessions.current?.rights
     val currency get() = orders.currency
 
+    /**
+     * D4: what the web order panel does besides sending and billing (table, merge, split, waiter,
+     * customer, charges, payment fix, « Vérifié », cancel, a line taken off). A merge answers the
+     * other table's check: Commandes follows it.
+     */
+    val check = CheckActions(
+        orders, sessions, scope,
+        onChanged = { change ->
+            selectedId = change.order.id
+            detail = UiState.Success(change.order)
+            messageChannel.trySend(change.message)
+            refreshList()
+        },
+        onClosed = { message ->
+            messageChannel.trySend(message)
+            refresh()
+        },
+    )
+
     init {
         initialMessage?.let { messageChannel.trySend(it) }
         refresh()
     }
 
     fun refresh() {
+        refreshList()
+        selectedId?.let { loadDetail(it, quiet = true) }
+    }
+
+    private fun refreshList() {
         val keep = list is UiState.Success
         if (!keep) list = UiState.Loading
         scope.launch {
@@ -104,7 +119,6 @@ class OrdersModel(
                 .onSuccess { list = UiState.Success(it) }
                 .onFailure { if (!keep) list = UiState.Error(it.message ?: "Liste indisponible.", (it as? ApiFailure)?.hint) else messageChannel.trySend(it.message ?: "Liste indisponible.") }
         }
-        selectedId?.let { loadDetail(it, quiet = true) }
     }
 
     fun chooseFilter(f: OrderFilter) {
@@ -124,11 +138,20 @@ class OrdersModel(
         scope.launch {
             orders.orderDetail(id)
                 .onSuccess { if (selectedId == id) detail = UiState.Success(it) }
-                .onFailure { if (selectedId == id) detail = UiState.Error(it.message ?: "Commande introuvable.", (it as? ApiFailure)?.hint) }
+                .onFailure {
+                    if (selectedId != id) return@onFailure
+                    // Read again after a change and gone (its last line taken off): nothing selected any more.
+                    if (quiet && (it as? ApiFailure)?.httpCode == 404) {
+                        selectedId = null
+                        detail = null
+                    } else {
+                        detail = UiState.Error(it.message ?: "Commande introuvable.", (it as? ApiFailure)?.hint)
+                    }
+                }
         }
     }
 
-    private val current: OrderDetailDto? get() = (detail as? UiState.Success)?.data
+    val current: OrderDetailDto? get() = (detail as? UiState.Success)?.data
 
     // ---- Actions ----
 
@@ -171,27 +194,6 @@ class OrdersModel(
         }
     }
 
-    fun removeLine(itemId: Long) {
-        val order = current ?: return
-        if (busy) return
-        busy = true
-        scope.launch {
-            orders.removeItem(order.id, itemId)
-                .onSuccess { stillOpen ->
-                    if (stillOpen) {
-                        messageChannel.trySend("Article retiré de la commande.")
-                    } else {
-                        messageChannel.trySend("Plus aucun article : la commande est supprimée.")
-                        selectedId = null
-                        detail = null
-                    }
-                    refresh()
-                }
-                .onFailure { messageChannel.trySend(it.message ?: "Action impossible.") }
-            busy = false
-        }
-    }
-
     fun served(kotId: Long) {
         if (servingKot != null) return
         servingKot = kotId
@@ -200,53 +202,6 @@ class OrdersModel(
                 .onSuccess { messageChannel.trySend("Ticket marqué servi."); refresh() }
                 .onFailure { messageChannel.trySend(it.message ?: "Impossible de marquer le ticket servi.") }
             servingKot = null
-        }
-    }
-
-    // ---- Annuler la commande ----
-
-    fun openCancel() {
-        cancelForm = CancelForm()
-        scope.launch {
-            val reasons = orders.cancelReasons().fold(
-                onSuccess = { UiState.Success(it) },
-                onFailure = { UiState.Error(it.message ?: "Motifs indisponibles.", (it as? ApiFailure)?.hint) },
-            )
-            cancelForm = cancelForm?.copy(reasons = reasons)
-        }
-    }
-
-    fun closeCancel() {
-        if (!busy) cancelForm = null
-    }
-
-    fun cancelReason(id: Long?) {
-        cancelForm = cancelForm?.copy(reasonId = id, error = null)
-    }
-
-    fun cancelText(text: String) {
-        cancelForm = cancelForm?.copy(text = text, error = null)
-    }
-
-    /** As the web asks: a reason from the list, or a comment saying why. */
-    fun confirmCancel() {
-        val form = cancelForm ?: return
-        val order = current ?: return
-        if (form.reasonId == null && form.text.isBlank()) {
-            cancelForm = form.copy(error = "Choisissez un motif d'annulation, ou écrivez pourquoi.")
-            return
-        }
-        if (busy) return
-        busy = true
-        scope.launch {
-            orders.cancel(order.id, form.reasonId, form.text)
-                .onSuccess {
-                    cancelForm = null
-                    messageChannel.trySend("Commande #${order.orderNumber} annulée.")
-                    refresh()
-                }
-                .onFailure { cancelForm = form.copy(error = it.message ?: "Annulation impossible.") }
-            busy = false
         }
     }
 

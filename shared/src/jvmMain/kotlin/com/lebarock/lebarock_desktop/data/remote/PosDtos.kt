@@ -63,3 +63,74 @@ data class CancelRequest(
     @SerialName("reason_id") val reasonId: Long? = null,
     val reason: String? = null,
 )
+
+// ---- D4: a table and its check (caisse MobileCheckController) ----
+
+/** An extra charge on a check (service…): [id] is the check's own charge line. */
+@Serializable
+data class OrderChargeDto(
+    val id: Long,
+    val name: String = "",
+    val type: String = "fixed",
+    val value: Double = 0.0,
+    val amount: Double = 0.0,
+    val removable: Boolean = false,
+)
+
+/** A payment on a check: cash and card can be corrected one into the other. */
+@Serializable
+data class PaymentLineDto(
+    val id: Long,
+    val method: String = "cash",
+    val amount: Double = 0.0,
+    val balance: Double? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("offline_at") val offlineAt: String? = null,
+)
+
+@Serializable
+data class CustomerDto(
+    val id: Long,
+    val name: String = "",
+    val phone: String? = null,
+    val email: String? = null,
+)
+
+@Serializable
+data class TableIdRequest(@SerialName("table_id") val tableId: Long)
+
+@Serializable
+data class SplitLine(val id: Long, val quantity: Int)
+
+@Serializable
+data class SplitRequest(val lines: List<SplitLine>)
+
+@Serializable
+data class WaiterRequest(@SerialName("waiter_id") val waiterId: Long)
+
+@Serializable
+data class CustomerRequest(
+    @SerialName("customer_id") val customerId: Long? = null,
+    val name: String,
+    val phone: String? = null,
+    val email: String? = null,
+)
+
+@Serializable
+data class PaymentMethodRequest(val method: String)
+
+/** The split's answer: the first check as it is now, and the new one. */
+@Serializable
+data class SplitResponse(
+    val status: String = "success",
+    val message: String? = null,
+    val data: OrderDetailDto? = null,
+    @SerialName("new_order") val newOrder: NewOrderRefDto? = null,
+)
+
+@Serializable
+data class NewOrderRefDto(
+    val id: Long,
+    @SerialName("order_number") val orderNumber: String = "",
+    val total: Double = 0.0,
+)

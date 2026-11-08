@@ -12,8 +12,14 @@ sealed interface Screen {
 
     data object Home : Screen
 
-    /** The POS; [orderId]: « Nouveau ticket » on that open check (from Commandes). */
-    data class Pos(val orderId: Long? = null) : Screen
+    /**
+     * The POS; [orderId]: « Nouveau ticket » on that open check (from Commandes or Tables);
+     * [table] / [covers]: a new order on a free table picked on the floor (D4).
+     */
+    data class Pos(val orderId: Long? = null, val table: com.lebarock.lebarock_desktop.data.remote.TableDto? = null, val covers: Int = 1) : Screen
+
+    /** Tables (D4), the floor; [message] to show on arrival. */
+    data class Tables(val message: String? = null) : Screen
 
     /** Commandes; [message] to show on arrival, [select] the order to open. */
     data class Orders(val message: String? = null, val select: Long? = null) : Screen

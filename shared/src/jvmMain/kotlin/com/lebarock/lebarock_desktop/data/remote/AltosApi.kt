@@ -95,6 +95,38 @@ interface AltosApi {
     @GET("api/mobile/cancel-reasons")
     suspend fun cancelReasons(): Envelope<List<CancelReasonDto>>
 
+    // ---- D4: a table and its check, as on the web ----
+
+    @POST("api/mobile/orders/{id}/table")
+    suspend fun moveOrder(@Path("id") id: Long, @Body body: TableIdRequest): Envelope<OrderDetailDto>
+
+    @POST("api/mobile/orders/{id}/merge")
+    suspend fun mergeOrder(@Path("id") id: Long, @Body body: TableIdRequest): Envelope<OrderDetailDto>
+
+    @POST("api/mobile/orders/{id}/split")
+    suspend fun splitOrder(@Path("id") id: Long, @Body body: SplitRequest): SplitResponse
+
+    @POST("api/mobile/orders/{id}/waiter")
+    suspend fun setWaiter(@Path("id") id: Long, @Body body: WaiterRequest): Envelope<OrderDetailDto>
+
+    @GET("api/mobile/customers")
+    suspend fun customers(@Query("search") search: String): Envelope<List<CustomerDto>>
+
+    @POST("api/mobile/orders/{id}/customer")
+    suspend fun setCustomer(@Path("id") id: Long, @Body body: CustomerRequest): Envelope<OrderDetailDto>
+
+    @DELETE("api/mobile/orders/{id}/charges/{chargeId}")
+    suspend fun removeCharge(@Path("id") id: Long, @Path("chargeId") chargeId: Long): Envelope<OrderDetailDto>
+
+    @POST("api/mobile/orders/{id}/payments/{paymentId}/method")
+    suspend fun changePaymentMethod(@Path("id") id: Long, @Path("paymentId") paymentId: Long, @Body body: PaymentMethodRequest): Envelope<OrderDetailDto>
+
+    @POST("api/mobile/orders/{id}/reviewed")
+    suspend fun markReviewed(@Path("id") id: Long): Envelope<OrderDetailDto>
+
+    @POST("api/mobile/tables/{id}/release")
+    suspend fun releaseTable(@Path("id") id: Long): Envelope<Unit?>
+
     /** « Servi » on a round the kitchen has ready (C1). */
     @POST("api/mobile/tickets/{id}/served")
     suspend fun markServed(@Path("id") id: Long): Envelope<kotlinx.serialization.json.JsonObject?>

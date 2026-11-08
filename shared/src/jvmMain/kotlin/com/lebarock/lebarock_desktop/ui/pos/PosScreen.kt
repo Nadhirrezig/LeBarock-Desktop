@@ -97,6 +97,9 @@ import com.lebarock.lebarock_desktop.data.settings.CurrencyInfo
 import com.lebarock.lebarock_desktop.pos.CartLine
 import com.lebarock.lebarock_desktop.pos.OrderType
 import com.lebarock.lebarock_desktop.pos.tableLabel
+import com.lebarock.lebarock_desktop.ui.check.CheckAction
+import com.lebarock.lebarock_desktop.ui.check.CheckActionsButton
+import com.lebarock.lebarock_desktop.ui.check.CheckDialogs
 import com.lebarock.lebarock_desktop.ui.common.AppButton
 import com.lebarock.lebarock_desktop.ui.common.AppDialog
 import com.lebarock.lebarock_desktop.ui.common.AppTopBar
@@ -468,16 +471,24 @@ private fun ExistingOrderHeader(model: PosModel, order: OrderDetailDto) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
         Pill("Commande #${order.orderNumber}", MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.surfaceContainer)
         order.table?.code?.let { Pill(tableLabel(it), Info, InfoContainer) }
+        if (order.needsReview) Pill("À vérifier", Warning, WarningContainer)
         Spacer(Modifier.weight(1f))
         NoteButton(model.roundNote.isNotBlank(), model::openRoundNote)
     }
-    Text(
-        listOfNotNull(
-            order.numberOfPax?.let { "$it couvert" + if (it > 1) "s" else "" },
-            order.waiter?.name?.let { "Serveur : $it" },
-        ).joinToString(" · ").ifEmpty { " " },
-        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    // The party on the left, the check's other actions on the right (D4: table, merge, split, waiter,
+    // customer…, as on the web's order panel) — on their own line so both buttons keep their width.
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
+        Text(
+            listOfNotNull(
+                order.numberOfPax?.let { "$it couvert" + if (it > 1) "s" else "" },
+                order.waiter?.name?.let { "Serveur : $it" },
+                order.customer?.let { "Client : $it" },
+            ).joinToString(" · ").ifEmpty { " " },
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
+        CheckActionsButton(model.check.actions(order), enabled = !model.sending && !model.check.busy, onPick = { model.detailsOpen = false; model.check.open(it, order) })
+    }
 }
 
 @Composable
@@ -528,6 +539,10 @@ private fun CartLines(model: PosModel) {
                         }
                         Spacer(Modifier.width(Dimens.s))
                         Text(Money.plain(line.amount, currency), style = MaterialTheme.typography.bodyMedium)
+                        // D4: a waiting line, or a sent drink (« Annuler une commande »), comes off the order.
+                        if (CheckAction.canRemove(existing, line, model.rights)) {
+                            IconBox(Icons.Outlined.DeleteOutline, "Retirer cet article", tint = Danger, enabled = !model.check.busy, onClick = { model.check.askRemoveLine(existing, line) })
+                        }
                     }
                 }
                 item { CartSubHeading("Nouveau ticket") }
@@ -705,6 +720,7 @@ private fun Stepper(value: Int, onMinus: () -> Unit, onPlus: () -> Unit, label: 
 @Composable
 private fun PosDialogs(model: PosModel) {
     val currency = model.currency
+    CheckDialogs(model.check, currency)
     model.variationPick?.let { item ->
         AppDialog(item.name, onDismiss = model::closeVariations, subtitle = "Choisissez la variation", actions = { AppButton("Annuler", model::closeVariations, kind = ButtonKind.SECONDARY) }) {
             item.variations.forEach { v ->

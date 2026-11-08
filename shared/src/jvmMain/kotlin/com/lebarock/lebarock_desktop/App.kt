@@ -37,6 +37,8 @@ import com.lebarock.lebarock_desktop.ui.orders.OrdersModel
 import com.lebarock.lebarock_desktop.ui.orders.OrdersScreen
 import com.lebarock.lebarock_desktop.ui.pos.PosModel
 import com.lebarock.lebarock_desktop.ui.pos.PosScreen
+import com.lebarock.lebarock_desktop.ui.tables.TablesModel
+import com.lebarock.lebarock_desktop.ui.tables.TablesScreen
 import com.lebarock.lebarock_desktop.ui.idle.IdleMonitor
 import com.lebarock.lebarock_desktop.ui.login.LoginModel
 import com.lebarock.lebarock_desktop.ui.login.LoginScreen
@@ -137,6 +139,7 @@ fun App(container: AppContainer) {
                         HomeModel(container.repository, container.sessions, onOpenSettings = { navigator.push(Screen.Settings()) }) { section ->
                             when (section) {
                                 Section.POS -> navigator.push(Screen.Pos())
+                                Section.TABLES -> navigator.push(Screen.Tables())
                                 Section.ORDERS -> navigator.push(Screen.Orders())
                                 else -> Unit
                             }
@@ -152,15 +155,33 @@ fun App(container: AppContainer) {
                 }
                 is Screen.Pos -> {
                     val model = rememberScreenModel(screen) {
-                        PosModel(container.orders, container.sessions, container.idle, screen.orderId) { message ->
-                            navigator.back()
-                            // From Commandes: back on the same order, with what happened.
-                            if (screen.orderId != null && navigator.current is Screen.Orders) {
-                                navigator.replaceTop(Screen.Orders(message, select = screen.orderId))
-                            }
-                        }
+                        PosModel(
+                            container.orders, container.sessions, container.idle, screen.orderId,
+                            onLeave = { message ->
+                                navigator.back()
+                                when (navigator.current) {
+                                    // From Commandes: back on the same order, with what happened.
+                                    is Screen.Orders -> if (screen.orderId != null) navigator.replaceTop(Screen.Orders(message, select = screen.orderId))
+                                    // From the floor: back on it (read again), with what happened.
+                                    is Screen.Tables -> navigator.replaceTop(Screen.Tables(message))
+                                    else -> Unit
+                                }
+                            },
+                            startTable = screen.table,
+                            startCovers = screen.covers,
+                        )
                     }
                     PosScreen(model, caisseName = session?.caisse?.name, images = container.itemImages)
+                }
+                is Screen.Tables -> {
+                    val model = rememberScreenModel(screen) {
+                        TablesModel(
+                            container.orders, container.sessions, screen.message,
+                            onOpenCheck = { id -> navigator.push(Screen.Pos(orderId = id)) },
+                            onNewOrder = { table, covers -> navigator.push(Screen.Pos(table = table, covers = covers)) },
+                        )
+                    }
+                    TablesScreen(model, caisseName = session?.caisse?.name, onBack = navigator::back)
                 }
                 is Screen.Orders -> {
                     val model = rememberScreenModel(screen) {

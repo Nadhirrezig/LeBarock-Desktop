@@ -5,6 +5,14 @@ import com.lebarock.lebarock_desktop.data.remote.AreaDto
 import com.lebarock.lebarock_desktop.data.remote.BillRequest
 import com.lebarock.lebarock_desktop.data.remote.CancelReasonDto
 import com.lebarock.lebarock_desktop.data.remote.CancelRequest
+import com.lebarock.lebarock_desktop.data.remote.CustomerDto
+import com.lebarock.lebarock_desktop.data.remote.CustomerRequest
+import com.lebarock.lebarock_desktop.data.remote.NewOrderRefDto
+import com.lebarock.lebarock_desktop.data.remote.PaymentMethodRequest
+import com.lebarock.lebarock_desktop.data.remote.SplitLine
+import com.lebarock.lebarock_desktop.data.remote.SplitRequest
+import com.lebarock.lebarock_desktop.data.remote.TableIdRequest
+import com.lebarock.lebarock_desktop.data.remote.WaiterRequest
 import com.lebarock.lebarock_desktop.data.remote.Envelope
 import com.lebarock.lebarock_desktop.data.remote.MenuDto
 import com.lebarock.lebarock_desktop.data.remote.MenuItemDto
@@ -27,6 +35,9 @@ data class PrintOutcome(val ok: Boolean, val message: String)
 
 /** A caisse answer and, when a ticket was asked for, its [print] outcome. */
 data class Printed<T>(val value: T, val print: PrintOutcome?)
+
+/** What a table / check operation answers (D4): the check as it is now, and the caisse's French message. */
+data class CheckChange(val order: OrderDetailDto, val message: String, val newOrder: NewOrderRefDto? = null)
 
 /**
  * Orders at the counter (D3), as the handheld's AltosRepository: the menu, the tables, the order
@@ -122,6 +133,45 @@ class OrdersRepository(
 
     /** « Servi » on a round the kitchen has ready. */
     suspend fun served(kotId: Long): Result<Unit> = caisse.call { caisse.api().markServed(kotId); Unit }
+
+    // ---- D4: a table and its check, as on the web ----
+
+    /** « Changer de table »: the check moves to a free table (an occupied one is « Fusionner »). */
+    suspend fun moveOrder(orderId: Long, tableId: Long): Result<CheckChange> = change { caisse.api().moveOrder(orderId, TableIdRequest(tableId)) }
+
+    /** « Fusionner »: this table's party joins [tableId]'s check; the answer is that check. */
+    suspend fun mergeOrder(orderId: Long, tableId: Long): Result<CheckChange> = change { caisse.api().mergeOrder(orderId, TableIdRequest(tableId)) }
+
+    /** « Séparer »: [quantities] (line id → how many) move to a new check on the same table. */
+    suspend fun splitOrder(orderId: Long, quantities: Map<Long, Int>): Result<CheckChange> = caisse.call {
+        val answer = caisse.api().splitOrder(orderId, SplitRequest(quantities.map { (id, qty) -> SplitLine(id, qty) }))
+        CheckChange(answer.data ?: throw unexpected(), answer.message ?: "Commande séparée.", answer.newOrder)
+    }
+
+    suspend fun setWaiter(orderId: Long, waiterId: Long): Result<CheckChange> = change { caisse.api().setWaiter(orderId, WaiterRequest(waiterId)) }
+
+    /** The restaurant's customers matching a name, phone or e-mail (2 characters at least). */
+    suspend fun customers(search: String): Result<List<CustomerDto>> = caisse.call { caisse.api().customers(search.trim()).data.orEmpty() }
+
+    suspend fun setCustomer(orderId: Long, request: CustomerRequest): Result<CheckChange> = change { caisse.api().setCustomer(orderId, request) }
+
+    suspend fun removeCharge(orderId: Long, chargeId: Long): Result<CheckChange> = change { caisse.api().removeCharge(orderId, chargeId) }
+
+    /** Corrects a payment recorded with the wrong method, « cash » ⇄ « card »; the drawer follows. */
+    suspend fun changePaymentMethod(orderId: Long, paymentId: Long, method: String): Result<CheckChange> =
+        change { caisse.api().changePaymentMethod(orderId, paymentId, PaymentMethodRequest(method)) }
+
+    suspend fun markReviewed(orderId: Long): Result<CheckChange> = change { caisse.api().markReviewed(orderId) }
+
+    /** « Libérer »: a table opened (web, handheld) where nobody ordered is free again. */
+    suspend fun releaseTable(tableId: Long): Result<String> = caisse.call {
+        caisse.api().releaseTable(tableId).message ?: "Table libérée."
+    }
+
+    private suspend fun change(block: suspend () -> Envelope<OrderDetailDto>): Result<CheckChange> = caisse.call {
+        val envelope = block()
+        CheckChange(envelope.data ?: throw unexpected(), envelope.message ?: "Enregistré.")
+    }
 
     /**
      * The ticket's fate: « Sur cet appareil » → the caisse sent its content and this PC prints it;

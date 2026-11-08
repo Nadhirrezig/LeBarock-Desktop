@@ -26,6 +26,7 @@ import com.lebarock.lebarock_desktop.pos.ModifierRules
 import com.lebarock.lebarock_desktop.pos.OrderType
 import com.lebarock.lebarock_desktop.pos.searchItems
 import com.lebarock.lebarock_desktop.pos.sectionsOf
+import com.lebarock.lebarock_desktop.ui.check.CheckActions
 import com.lebarock.lebarock_desktop.ui.common.ScreenModel
 import com.lebarock.lebarock_desktop.ui.common.UiState
 import com.lebarock.lebarock_desktop.ui.idle.IdleMonitor
@@ -61,7 +62,13 @@ class PosModel(
     private val existingOrderId: Long?,
     /** Leave the POS (back to where it was opened from), with a message for that screen. */
     private val onLeave: (String?) -> Unit,
+    /** D4, from the floor: a free table already chosen with its covers (nothing recorded until « Envoyer »). */
+    private val startTable: TableDto? = null,
+    private val startCovers: Int = 1,
 ) : ScreenModel() {
+
+    /** Opened from Tables: once the order is sent (or billed) the POS goes back to the floor. */
+    private val returnsWhenDone: Boolean get() = existingOrderId != null || startTable != null
 
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages = messageChannel.receiveAsFlow()
@@ -138,9 +145,27 @@ class PosModel(
     /** A till with its own menu sells from it only (web `lockedMenuId`). */
     val menuLocked: Boolean get() = sessions.current?.caisse?.menuId != null
 
+    /**
+     * D4: what the web order panel does to a table's check (table, merge, split, waiter, customer,
+     * charges, « Vérifié », a line taken off, cancel). A merge answers the other table's check: the
+     * POS follows it. A cancelled or emptied check is done with.
+     */
+    val check = CheckActions(
+        orders, sessions, scope,
+        onChanged = { change ->
+            existing = UiState.Success(change.order)
+            messageChannel.trySend(change.message)
+        },
+        onClosed = { message -> finished(message) },
+    )
+
     init {
         load()
         existingOrderId?.let { openExisting(it) }
+        startTable?.let {
+            table = it
+            covers = startCovers.coerceAtLeast(1)
+        }
     }
 
     override fun onDispose() {
@@ -433,9 +458,9 @@ class PosModel(
         scope.launch { orders.posContext().onSuccess { context = UiState.Success(it) } }
     }
 
-    /** Done with this order: a POS opened on a check from Commandes goes back there; else a fresh POS. */
+    /** Done with this order: a POS opened from Commandes or Tables goes back there; else a fresh POS. */
     private fun finished(message: String) {
-        if (existingOrderId != null) {
+        if (returnsWhenDone) {
             hold?.release()
             hold = null
             onLeave(message)

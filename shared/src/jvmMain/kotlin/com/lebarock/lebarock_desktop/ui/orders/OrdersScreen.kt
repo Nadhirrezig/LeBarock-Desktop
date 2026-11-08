@@ -66,6 +66,10 @@ import com.lebarock.lebarock_desktop.data.remote.OrderDto
 import com.lebarock.lebarock_desktop.data.remote.OrderItemDto
 import com.lebarock.lebarock_desktop.data.settings.CurrencyInfo
 import com.lebarock.lebarock_desktop.pos.tableLabel
+import com.lebarock.lebarock_desktop.ui.check.CheckAction
+import com.lebarock.lebarock_desktop.ui.check.CheckActionsButton
+import com.lebarock.lebarock_desktop.ui.check.CheckDialogs
+import com.lebarock.lebarock_desktop.ui.check.methodLabel
 import com.lebarock.lebarock_desktop.ui.common.AppButton
 import com.lebarock.lebarock_desktop.ui.common.AppDialog
 import com.lebarock.lebarock_desktop.ui.common.AppTopBar
@@ -291,8 +295,8 @@ private fun OrderDetail(model: OrdersModel, order: OrderDetailDto) {
                     )
                     unsent.forEach { line ->
                         LineRow(line, currency) {
-                            if (line.waitingForStock && rights?.orders == true && order.status != "canceled") {
-                                IconBox(Icons.Outlined.DeleteOutline, "Retirer cet article", tint = Danger, enabled = !model.busy, onClick = { model.removeLine(line.id) })
+                            if (CheckAction.canRemove(order, line, rights)) {
+                                IconBox(Icons.Outlined.DeleteOutline, "Retirer cet article", tint = Danger, enabled = !model.check.busy, onClick = { model.check.askRemoveLine(order, line) })
                             }
                         }
                     }
@@ -300,6 +304,7 @@ private fun OrderDetail(model: OrdersModel, order: OrderDetailDto) {
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Totals(order, currency)
+                if (order.payments.isNotEmpty()) Payments(model, order, currency)
             }
             VerticalScrollbar(rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
         }
@@ -319,7 +324,13 @@ private fun KotGroup(model: OrdersModel, kot: KotDto, lines: List<OrderItemDto>,
                 AppButton("Servi", { model.served(kot.id) }, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Check, loading = model.servingKot == kot.id)
             }
         }
-        lines.forEach { LineRow(it, currency) {} }
+        lines.forEach { line ->
+            LineRow(line, currency) {
+                if (CheckAction.canRemove(model.current ?: return@LineRow, line, model.rights)) {
+                    IconBox(Icons.Outlined.DeleteOutline, "Retirer cet article", tint = Danger, enabled = !model.check.busy, onClick = { model.current?.let { model.check.askRemoveLine(it, line) } })
+                }
+            }
+        }
     }
 }
 
@@ -360,11 +371,36 @@ private fun Totals(order: OrderDetailDto, currency: CurrencyInfo) {
     Column(verticalArrangement = Arrangement.spacedBy(Dimens.xs)) {
         TotalLine("Sous-total", Money.format(order.subTotal, currency))
         order.discountAmount?.takeIf { it > 0 }?.let { TotalLine("Remise", "-" + Money.format(it, currency)) }
+        order.charges.forEach { c -> TotalLine(c.name + if (c.type == "percent") " (${pct(c.value)} %)" else "", Money.format(c.amount, currency)) }
         order.tipAmount?.takeIf { it > 0 }?.let { TotalLine("Pourboire", Money.format(it, currency)) }
         TotalLine("Total", Money.format(order.total, currency), strong = true)
         if (order.amountPaid > 0) TotalLine("Payé", Money.format(order.amountPaid, currency))
         val due = order.total - order.amountPaid
         if (order.status != "canceled" && order.amountPaid > 0 && due > 0.005) TotalLine("Reste dû", Money.format(due, currency), strong = true)
+    }
+}
+
+private fun pct(value: Double): String = if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
+
+/** The payments taken on the check; cash and card can be corrected one into the other (« Encaisser » right). */
+@Composable
+private fun Payments(model: OrdersModel, order: OrderDetailDto, currency: CurrencyInfo) {
+    val canFix = model.rights?.takePayment == true && order.status != "canceled"
+    Column(verticalArrangement = Arrangement.spacedBy(Dimens.xs)) {
+        Text("Paiements", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        order.payments.forEach { p ->
+            Row(Modifier.fillMaxWidth().heightIn(min = Dimens.control), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(methodLabel(p.method).replaceFirstChar { it.uppercase() } + (timeOf(p.createdAt)?.let { " · $it" } ?: ""), style = MaterialTheme.typography.bodyLarge)
+                    p.offlineAt?.let { Text("Encaissé hors ligne" + (timeOf(it)?.let { t -> " à $t" } ?: ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+                Text(Money.format(p.amount, currency), style = MaterialTheme.typography.bodyLarge)
+                if (canFix && (p.method == "cash" || p.method == "card")) {
+                    Spacer(Modifier.width(Dimens.s))
+                    AppButton(if (p.method == "cash") "Corriger : carte" else "Corriger : espèces", { model.check.openPaymentFix(order, p) }, kind = ButtonKind.TEXT, enabled = !model.check.busy)
+                }
+            }
+        }
     }
 }
 
@@ -391,9 +427,11 @@ private fun ActionBar(model: OrdersModel, order: OrderDetailDto) {
         }
         if (!running && order.status != "canceled") AppButton("Réimprimer", model::reprint, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Print, loading = model.busy)
         if (open && rights?.takePayment == true) AppButton("Encaisser (étape D5)", {}, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Payments, enabled = false)
-        if (order.status != "canceled" && rights?.cancelOrder == true) {
+        val more = model.check.actions(order).filter { it != CheckAction.CANCEL }
+        CheckActionsButton(more, enabled = !model.busy && !model.check.busy, onPick = { model.check.open(it, order) })
+        if (CheckAction.CANCEL in model.check.actions(order)) {
             Spacer(Modifier.weight(1f))
-            AppButton("Annuler la commande", model::openCancel, kind = ButtonKind.DANGER, icon = Icons.Outlined.Block, enabled = !model.busy)
+            AppButton("Annuler la commande", { model.check.open(CheckAction.CANCEL, order) }, kind = ButtonKind.DANGER, icon = Icons.Outlined.Block, enabled = !model.busy && !model.check.busy)
         }
     }
 }
@@ -402,45 +440,7 @@ private fun ActionBar(model: OrdersModel, order: OrderDetailDto) {
 
 @Composable
 private fun OrderDialogs(model: OrdersModel) {
-    model.cancelForm?.let { form ->
-        AppDialog(
-            "Annuler la commande", onDismiss = model::closeCancel, width = 560.dp, dismissible = !model.busy,
-            subtitle = "La commande sera annulée et ses paiements remboursés. Continuer ?",
-            actions = {
-                AppButton("Retour", model::closeCancel, kind = ButtonKind.SECONDARY, enabled = !model.busy)
-                AppButton("Annuler la commande", model::confirmCancel, kind = ButtonKind.DANGER, loading = model.busy)
-            },
-        ) {
-            FormField("Choisir le motif d'annulation") {
-                when (val reasons = form.reasons) {
-                    UiState.Loading -> Box(Modifier.fillMaxWidth().height(Dimens.control)) { LoadingBox() }
-                    is UiState.Error -> Banner(Tone.DANGER, reasons.message, detail = reasons.hint)
-                    is UiState.Success -> ScrollArea(240.dp) {
-                        if (reasons.data.isEmpty()) Text("Aucun motif dans Paramètres → Motifs d'annulation : écrivez pourquoi ci-dessous.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        reasons.data.forEach { r ->
-                            val on = form.reasonId == r.id
-                            Row(
-                                Modifier.fillMaxWidth().height(Dimens.control).clip(Dimens.shape)
-                                    .background(if (on) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                                    .border(if (on) 2.dp else 1.dp, if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, Dimens.shape)
-                                    .clickable { model.cancelReason(if (on) null else r.id) }.pointerHoverIcon(PointerIcon.Hand)
-                                    .padding(horizontal = Dimens.m),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(Icons.Outlined.Check, contentDescription = null, tint = if (on) MaterialTheme.colorScheme.primary else Color.Transparent, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(Dimens.s))
-                                Text(r.reason, style = MaterialTheme.typography.bodyLarge)
-                            }
-                        }
-                    }
-                }
-            }
-            FormField("Commentaire (facultatif)") {
-                TextInput(form.text, model::cancelText, modifier = Modifier.fillMaxWidth(), placeholder = "Ex. client parti avant d'être servi")
-            }
-            form.error?.let { Banner(Tone.DANGER, it) }
-        }
-    }
+    CheckDialogs(model.check, model.currency)
 
     model.printProblem?.let { message ->
         AppDialog("Ticket non imprimé", onDismiss = model::closePrintProblem, actions = { AppButton("Compris", model::closePrintProblem) }) {

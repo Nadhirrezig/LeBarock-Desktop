@@ -222,6 +222,16 @@ data class TableSessionDto(
     @SerialName("opened_at") val openedAt: String? = null,
     val pax: Int = 0,
     @SerialName("bill_requested") val billRequested: Boolean = false,
+    /** D4: merged into another table's party (« Avec T5 »): that table holds the check. */
+    @SerialName("merged_into") val mergedInto: OrderRefDto? = null,
+)
+
+/** D4: the day's next confirmed reservation on a table (web floor: « Résa 20:30 · Client · 4 pers. »). */
+@Serializable
+data class ReservationDto(
+    val at: String? = null,
+    val name: String? = null,
+    @SerialName("party_size") val partySize: Int = 0,
 )
 
 @Serializable
@@ -235,6 +245,12 @@ data class TableDto(
     val session: TableSessionDto? = null,
     @SerialName("pending_qr_rounds") val pendingQrRounds: Int = 0,
     @SerialName("active_order") val activeOrder: ActiveOrderDto? = null,
+    // D4: what a web floor tile shows.
+    @SerialName("open_orders") val openOrders: Int = 0,
+    @SerialName("open_total") val openTotal: Double = 0.0,
+    @SerialName("ready_tickets") val readyTickets: Int = 0,
+    @SerialName("stock_waiting") val stockWaiting: Boolean = false,
+    @SerialName("next_reservation") val nextReservation: ReservationDto? = null,
 )
 
 @Serializable
@@ -305,8 +321,13 @@ data class OrderItemDto(
     val modifiers: List<ModifierOptionDto> = emptyList(),
     // C5: "taken" by the stock, "waiting" for it (the round did not reach the kitchen), null = not sent.
     @SerialName("stock_state") val stockState: String? = null,
+    /** D4: fired to a kitchen — it leaves through its kitchen ticket, not from the order. */
+    val fired: Boolean = false,
 ) {
     val waitingForStock: Boolean get() = stockState == "waiting"
+
+    /** Sent but in no kitchen (a drink): the caisse takes it off with « Annuler une commande ». */
+    val sentNotFired: Boolean get() = stockState == "taken" && !fired
 }
 
 @Serializable
@@ -351,6 +372,10 @@ data class OrderDetailDto(
     // Step 3: taken offline ("Hors ligne : H2-007"), and to check after the sync.
     @SerialName("offline_number") val offlineNumber: String? = null,
     @SerialName("needs_review") val needsReview: Boolean = false,
+    // D4: the extra charges (removable on an open check), the payments (cash / card can be corrected), the customer.
+    val charges: List<OrderChargeDto> = emptyList(),
+    val payments: List<PaymentLineDto> = emptyList(),
+    @SerialName("customer_info") val customerInfo: CustomerDto? = null,
 )
 
 /** A round the stock did not take (short, or no answer): it waits, nothing went to the kitchen. */

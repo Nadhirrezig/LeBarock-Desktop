@@ -89,6 +89,8 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   `pos/order_items`, `Pos::calculateTotal`); **Commandes = today's orders with the status chips** (as the handheld);
   **« Annuler la commande » works like the web everywhere**: the order stays « Annulée » with its reason (list + text),
   the handheld's cancel too (it used to delete the order); the caisse's thermal bill date fixed in the same step.
+- **Item photos (client, 2026-11-08):** "do like the web": a photo on each item card, the web's food icon for an item
+  without one, square cards as on the web.
 
 ## How D1 is built (2026-11-08)
 
@@ -203,7 +205,19 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   on the same order, with what happened. Times in the PC's own time zone.
 - Window style: `AppDialog` takes its width (no platform maximum), `ScrollArea` (a window's scrolling part, scrollbar
   only when it overflows), the note windows take the keyboard at once.
-- Tests: 62 (+ `PosDataTest` 9: amounts as the caisse writes them, cart merging / « − » / notes, the web's totals,
+- **Item photos, as the web card** (`pos/menu`; client after D3): `ui/pos/ItemImages` + `ItemPhoto` — the caisse's
+  `image_url` put on the server of Réglages (its `APP_URL` is often `localhost`), fetched through `ApiClient.images()`
+  (the app's HTTPS trust, no token, an HTTP cache of 50 MB in `%APPDATA%\AltosPOS\cache\images` that follows the
+  caisse's cache headers), kept in memory (400); `img/food.svg` and a photo that does not come → the web's food icon,
+  bundled with the app (`resources/item/*.svg`, copied from the caisse's `public/img`), tried again after a minute.
+  Card (`ItemCard`): the photo in a square (cropped, as `object-cover`), the item type's badge at the top left (veg,
+  non-veg, egg, drink; none for « other », which has no icon on the web either), « ÉPUISÉ » over the darkened photo,
+  the name on two lines and the price in a green pill with its currency (« 55.000 DT »), or « Voir les variations »;
+  grid of cards from 150 dp (5 columns at 1366 × 768, 3 at 125 %). Compared with the web POS in a browser at
+  1366 × 768: same columns, photo, icon, badge, pill.
+- Tests: 67 (+ `ItemImagesTest` 5: the URL put on the server of Réglages, the food icon without a call, a photo
+  fetched once then kept, a photo that does not come falls back and is tried again after a minute, no badge for
+  « other »; `PosDataTest` 9: amounts as the caisse writes them, cart merging / « − » / notes, the web's totals,
   sections / search / options, « Imprimer Ticket » printed here from the caisse's ticket with every field sent
   (`print_target`, `waiter_id`, `removed_charge_ids`, note), a ticket not printed leaves the bill made, the stock's
   refusal with what to do, the POS context's currency kept, cancel with its reason, a refused reprint says why).
@@ -257,3 +271,6 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
   cart's lines had ~180 px at 1366 × 768 (header compacted, then folded into one line on short screens), the bottom
   buttons were cut, the note window did not take the keyboard, the table picker was held to the platform's dialog width.
   62 desktop tests; caisse suite 337 passed. Next: the client tests D3 on the counter PC; then D4 (Tables).
+- 2026-11-08 — Client: "check the POS uses images like the web and the handheld". It did not (text cards). Client: like
+  the web, photo on each article, the food icon for those without, square cards. Built (see "Item photos"), compared
+  with the web POS in a browser. Caisse fixes of the same day in its `CLAUDE.md`. 67 desktop tests.

@@ -56,6 +56,7 @@ class ApiClient(
     fun reloadTrust() {
         http = build()
         cached = null
+        images = null // rebuilt with the new trust, on the same disk cache
     }
 
     /**
@@ -72,6 +73,37 @@ class ApiClient(
                 chain.proceed(
                     chain.request().newBuilder()
                         .header("Accept", "application/json")
+                        .header("User-Agent", "${AppInfo.NAME}-Desktop/${AppInfo.version}")
+                        .build(),
+                )
+            }
+            .build()
+    }
+
+    /**
+     * The POS's item photos (D3): same trust as the API, no token (the caisse's photos are public files), and an
+     * HTTP cache in [cacheDir] that follows the caisse's cache headers (`/user-uploads/`: 7 days), so a photo seen
+     * once is not fetched again at each POS.
+     */
+    fun images(): OkHttpClient = images ?: imageHttp().also { images = it }
+
+    /** Where the photos' HTTP cache lives (`%APPDATA%\AltosPOS\cache\images`); null = no disk cache (tests). */
+    var imageCacheDir: java.io.File? = null
+
+    @Volatile private var images: OkHttpClient? = null
+    private val imageCache: okhttp3.Cache? by lazy { imageCacheDir?.let { okhttp3.Cache(it, 50L * 1024 * 1024) } }
+
+    private fun imageHttp(): OkHttpClient {
+        val trust = trustManagerFactory()
+        return OkHttpClient.Builder()
+            .sslSocketFactory(TrustStore.sslContext(trust).socketFactory, trust)
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .apply { imageCache?.let { cache(it) } }
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("Accept", "image/*")
                         .header("User-Agent", "${AppInfo.NAME}-Desktop/${AppInfo.version}")
                         .build(),
                 )

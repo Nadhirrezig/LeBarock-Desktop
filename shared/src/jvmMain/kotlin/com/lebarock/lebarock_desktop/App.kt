@@ -160,7 +160,7 @@ fun App(container: AppContainer) {
                             }
                         }
                     }
-                    PosScreen(model, caisseName = session?.caisse?.name)
+                    PosScreen(model, caisseName = session?.caisse?.name, images = container.itemImages)
                 }
                 is Screen.Orders -> {
                     val model = rememberScreenModel(screen) {

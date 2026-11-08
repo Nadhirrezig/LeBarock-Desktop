@@ -1,6 +1,9 @@
 package com.lebarock.lebarock_desktop.ui.pos
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -119,7 +122,7 @@ import com.lebarock.lebarock_desktop.ui.theme.WarningContainer
 
 /** The counter's POS: the menu on the left, the web POS's cart on the right, always visible. */
 @Composable
-fun PosScreen(model: PosModel, caisseName: String?) {
+fun PosScreen(model: PosModel, caisseName: String?, images: ItemImages) {
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(model) { model.messages.collect { snackbar.showSnackbar(it) } }
     val existing = model.existingOrder
@@ -144,7 +147,7 @@ fun PosScreen(model: PosModel, caisseName: String?) {
                 UiState.Loading -> LoadingBox(label = "Chargement du POS…")
                 is UiState.Error -> ErrorBox(ctx.message, ctx.hint, onRetry = model::load)
                 is UiState.Success -> Row(Modifier.fillMaxSize().padding(Dimens.m), horizontalArrangement = Arrangement.spacedBy(Dimens.m)) {
-                    MenuColumn(model, Modifier.weight(1f).fillMaxHeight())
+                    MenuColumn(model, images, Modifier.weight(1f).fillMaxHeight())
                     CartPanel(model, ctx.data, compact, Modifier.width(cartWidth).fillMaxHeight())
                 }
             }
@@ -157,7 +160,7 @@ fun PosScreen(model: PosModel, caisseName: String?) {
 // ── The menu ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun MenuColumn(model: PosModel, modifier: Modifier) {
+private fun MenuColumn(model: PosModel, images: ItemImages, modifier: Modifier) {
     val currency = model.currency
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Dimens.sm)) {
         if (!model.menuLocked && model.menus.size > 1) {
@@ -194,7 +197,7 @@ private fun MenuColumn(model: PosModel, modifier: Modifier) {
                 is UiState.Success -> if (model.showSections) {
                     SectionTiles(model)
                 } else {
-                    ItemGrid(model.visibleItems, currency, empty = if (model.search.isNotBlank()) "Aucun article ne correspond." else "Aucun élément", onItem = model::onItem)
+                    ItemGrid(model.visibleItems, currency, images, empty = if (model.search.isNotBlank()) "Aucun article ne correspond." else "Aucun élément", onItem = model::onItem)
                 }
             }
         }
@@ -233,7 +236,7 @@ private fun SectionTiles(model: PosModel) {
 }
 
 @Composable
-private fun ItemGrid(items: List<MenuItemDto>, currency: CurrencyInfo, empty: String, onItem: (MenuItemDto) -> Unit) {
+private fun ItemGrid(items: List<MenuItemDto>, currency: CurrencyInfo, images: ItemImages, empty: String, onItem: (MenuItemDto) -> Unit) {
     if (items.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(empty, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -243,41 +246,70 @@ private fun ItemGrid(items: List<MenuItemDto>, currency: CurrencyInfo, empty: St
     val state = rememberLazyGridState()
     Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 168.dp),
+            // The web's grid (4 to 6 columns by width): square cards of about 150 to 200 dp.
+            columns = GridCells.Adaptive(minSize = 150.dp),
             state = state,
             horizontalArrangement = Arrangement.spacedBy(Dimens.sm),
             verticalArrangement = Arrangement.spacedBy(Dimens.sm),
             contentPadding = PaddingValues(end = Dimens.m, bottom = Dimens.m),
             modifier = Modifier.fillMaxSize(),
         ) {
-            items(items, key = { it.id }) { item ->
-                val available = item.inStock
-                Card(
-                    onClick = { onItem(item) },
-                    enabled = available,
-                    shape = Dimens.cardShape,
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth().height(112.dp).pointerHoverIcon(if (available) PointerIcon.Hand else PointerIcon.Default),
+            items(items, key = { it.id }) { item -> ItemCard(item, currency, images) { onItem(item) } }
+        }
+        VerticalScrollbar(rememberScrollbarAdapter(state), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+    }
+}
+
+/**
+ * The web POS's item card (`pos/menu`): the photo in a square (the food icon when the item has none), the item
+ * type's badge at the top left, « ÉPUISÉ » over a darkened photo when out of stock; under it the name on two lines
+ * and the price in a green pill, or « Voir les variations ».
+ */
+@Composable
+private fun ItemCard(item: MenuItemDto, currency: CurrencyInfo, images: ItemImages, onClick: () -> Unit) {
+    val available = item.inStock
+    Card(
+        onClick = onClick,
+        enabled = available,
+        shape = Dimens.cardShape,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().pointerHoverIcon(if (available) PointerIcon.Hand else PointerIcon.Default),
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
+            ItemPhoto(item.imageUrl, images, Modifier.fillMaxSize())
+            ItemImages.typeIcon(item.type)?.let { icon ->
+                Box(
+                    Modifier.padding(Dimens.s).size(28.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.95f)).padding(5.dp),
                 ) {
-                    Column(Modifier.fillMaxSize().padding(Dimens.sm), verticalArrangement = Arrangement.SpaceBetween) {
-                        Text(
-                            item.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis,
-                            color = if (available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        when {
-                            !available -> Pill("Épuisé", Danger, Color(0xFFFEE2E2))
-                            item.variations.isNotEmpty() -> Text("Voir les variations", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
-                            else -> Text(Money.plain(item.price, currency), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                        }
-                    }
+                    Image(icon, contentDescription = null, modifier = Modifier.fillMaxSize())
+                }
+            }
+            if (!available) {
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)), contentAlignment = Alignment.Center) {
+                    Pill("ÉPUISÉ", Color.White, Danger)
                 }
             }
         }
-        VerticalScrollbar(rememberScrollbarAdapter(state), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+        Column(Modifier.fillMaxWidth().padding(horizontal = Dimens.sm, vertical = Dimens.s)) {
+            Text(
+                item.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+                maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis,
+                color = if (available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (available) {
+                Spacer(Modifier.height(Dimens.xs))
+                if (item.variations.isEmpty()) {
+                    // As the web card: the price with the currency (« 55.000 DT »).
+                    Pill(Money.format(item.price, currency), Success, SuccessContainer, large = true)
+                } else {
+                    Text("Voir les variations", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium, modifier = Modifier.height(28.dp))
+                }
+            }
+        }
     }
 }
 
@@ -597,9 +629,13 @@ internal fun IconBox(
 }
 
 @Composable
-internal fun Pill(text: String, fg: Color, bg: Color) {
+internal fun Pill(text: String, fg: Color, bg: Color, large: Boolean = false) {
     Surface(shape = Dimens.shape, color = bg) {
-        Text(text, Modifier.padding(horizontal = Dimens.s, vertical = Dimens.xs), style = MaterialTheme.typography.labelMedium, color = fg, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(
+            text, Modifier.padding(horizontal = Dimens.s, vertical = Dimens.xs),
+            style = if (large) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelMedium,
+            color = fg, fontWeight = if (large) FontWeight.ExtraBold else FontWeight.SemiBold, maxLines = 1,
+        )
     }
 }
 

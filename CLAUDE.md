@@ -18,7 +18,7 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
 - Kotlin 2.4.21, Compose Multiplatform 1.12.2 (material3 1.12.0-alpha03), Gradle 9.5.1, JDK 21. Retrofit 3, OkHttp 5,
   kotlinx.serialization, material-icons-extended, JNA (Windows DPAPI and registry).
 - Modules: `shared` (all app code `src/jvmMain`, tests `src/jvmTest`), `desktopApp` (window, tray, installer settings).
-- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**90 tests**, 2026-11-10).
+- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**91 tests**, 2026-11-10).
 - Installer: `gradlew :desktopApp:packageMsi` **on Windows** → `desktopApp/build/compose/binaries/main/msi/AltosPOS-x.y.z.msi`.
   Raise `altospos.version` for each release (MAJOR.MINOR.BUILD); `upgradeUuid` never changes.
 - Data folder `%APPDATA%\AltosPOS` (`settings.json`, `logs\`, `certs\`, `cache\images`, lock file); `-Daltospos.home=` overrides it.
@@ -53,7 +53,10 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   « Envoyer »; refresh every 15 s. Every web operation except QR approvals.
 - **Encaisser (D5):** the web's payment window; discount in the POS cart like the web; receipt printed by itself once
   settled; « Encaisser » from the POS, Commandes, Accueil (« À encaisser », every day) and the floor.
-- **Caisse (D6):** the web's Caisse page + past X / Z on the account's Caisse; Z counted by notes and coins; expenses = web
+- **Caisse (D6):** the web's Caisse page + past X / Z on the account's Caisse; Z counted by value (whole numbers, the
+  caisse's list) **plus « Reste (pièces) », an amount typed for the coins** (sent as `rest`; client 2026-11-10, no coin
+  values); movements under the web's names (« Entrée de caisse / Sortie de caisse / Prélèvement coffre », action buttons
+  two per row so they fit at 100 % and 125 %); expenses = web
   form + the day's list; every money action asks « Confirmer »; the Z's approval stays on the web.
 - **Not included:** cash drawer, customer display, barcode, kitchen screen, waiter notifications, QR approvals.
 
@@ -98,9 +101,10 @@ USB printing through a Windows driver, tray and registry — the client's test.
 
 ## Open questions
 
-- Caisse side (its `CLAUDE.md`): the web's Caisse page in English; millimes in the Z count.
+- None.
 
 ## History (short)
 
 - 2026-11-08 — review approved (~17.5 days); D1, D2, D3, D4 built.
 - 2026-11-10 — D4 reviewed and fixed; D5 and D6 built. Order changed by the client: offline mode, then the MSI last.
+  Z count: « Reste (pièces) » amount added; movement names follow the web.

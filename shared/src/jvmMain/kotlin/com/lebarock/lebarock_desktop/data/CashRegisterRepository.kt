@@ -54,10 +54,10 @@ class CashRegisterRepository(
         Printed(e.data ?: throw unexpected(), outcomes.of(e))
     }
 
-    /** « Fermer la caisse » (Z): the count by value and a note; printed; the session waits for its approval. */
-    suspend fun close(breakdown: Map<Int, Int>, notes: String?): Result<Printed<CashReportDto>> = caisse.call {
+    /** « Fermer la caisse » (Z): the count by value, the rest (coins) and a note; printed; the session waits for its approval. */
+    suspend fun close(breakdown: Map<Int, Int>, rest: Double, notes: String?): Result<Printed<CashReportDto>> = caisse.call {
         val counted = breakdown.filterValues { it > 0 }.mapKeys { it.key.toString() }
-        val e = caisse.api().closeSession(CloseSessionRequest(counted, notes?.trim()?.ifEmpty { null }, target))
+        val e = caisse.api().closeSession(CloseSessionRequest(counted, rest.takeIf { it > 0 }, notes?.trim()?.ifEmpty { null }, target))
         Printed(e.data ?: throw unexpected(), outcomes.of(e))
     }
 

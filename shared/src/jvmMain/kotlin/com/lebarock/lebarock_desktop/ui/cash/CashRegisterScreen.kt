@@ -175,28 +175,34 @@ private fun SessionTab(model: CashRegisterModel, st: CashRegisterStateDto) {
                     }
                 }
                 st.kpi?.let { k ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
-                        Kpi("Fond de caisse", Money.format(k.openingCash, currency), Modifier.weight(1f))
-                        Kpi("Ventes espèces", Money.format(k.salesCash, currency), Modifier.weight(1f))
-                        Kpi("Entrées", Money.format(k.cashIn, currency), Modifier.weight(1f))
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
-                        Kpi("Sorties", Money.format(k.cashOut, currency), Modifier.weight(1f))
-                        Kpi("Dépôts au coffre", Money.format(k.safeDrops, currency), Modifier.weight(1f))
-                        Kpi("Remboursements", Money.format(k.refundsCash, currency), Modifier.weight(1f))
-                    }
-                }
-                if (rights?.useCashRegister == true) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
-                        Movement.entries.forEach { m ->
-                            AppButton(m.title, { model.movementWindow(m) }, kind = ButtonKind.SECONDARY, modifier = Modifier.weight(1f))
+                    Column(verticalArrangement = Arrangement.spacedBy(Dimens.s)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
+                            Kpi("Fond de caisse", Money.format(k.openingCash, currency), Modifier.weight(1f))
+                            Kpi("Ventes espèces", Money.format(k.salesCash, currency), Modifier.weight(1f))
+                            Kpi("Entrées", Money.format(k.cashIn, currency), Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
+                            Kpi("Sorties", Money.format(k.cashOut, currency), Modifier.weight(1f))
+                            Kpi("Coffre", Money.format(k.safeDrops, currency), Modifier.weight(1f))
+                            Kpi("Remboursements", Money.format(k.refundsCash, currency), Modifier.weight(1f))
                         }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
-                    AppButton("Rapport X", model::makeX, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Print, loading = model.making, modifier = Modifier.weight(1f))
+                // Two per row: the web's names (« Prélèvement coffre ») do not fit three across, at 1366 × 768 or at
+                // 125 %; the rows stay 8 apart so « Fermer la caisse (Z) » is still on screen at 1093 × 614.
+                Column(verticalArrangement = Arrangement.spacedBy(Dimens.s)) {
                     if (rights?.useCashRegister == true) {
-                        AppButton("Fermer la caisse (Z)", model::closeWindow, kind = ButtonKind.DANGER, icon = Icons.Outlined.Lock, modifier = Modifier.weight(1f))
+                        Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
+                            AppButton(Movement.CASH_IN.title, { model.movementWindow(Movement.CASH_IN) }, kind = ButtonKind.SECONDARY, modifier = Modifier.weight(1f))
+                            AppButton(Movement.CASH_OUT.title, { model.movementWindow(Movement.CASH_OUT) }, kind = ButtonKind.SECONDARY, modifier = Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
+                            AppButton(Movement.SAFE_DROP.title, { model.movementWindow(Movement.SAFE_DROP) }, kind = ButtonKind.SECONDARY, modifier = Modifier.weight(1f))
+                            AppButton("Rapport X", model::makeX, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Print, loading = model.making, modifier = Modifier.weight(1f))
+                        }
+                        AppButton("Fermer la caisse (Z)", model::closeWindow, kind = ButtonKind.DANGER, icon = Icons.Outlined.Lock, modifier = Modifier.fillMaxWidth())
+                    } else {
+                        AppButton("Rapport X", model::makeX, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Print, loading = model.making, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -579,7 +585,7 @@ private fun AmountDialog(
     }
 }
 
-/** « Fermer la caisse »: the cash expected, the count by value (− / +), the difference, a note; then « Confirmer ». */
+/** « Fermer la caisse »: the cash expected, the count by value (− / +), the rest (coins), the difference, a note; then « Confirmer ». */
 @Composable
 private fun CloseDialog(model: CashRegisterModel, d: CashDialog.Close, currency: CurrencyInfo, bodyMax: androidx.compose.ui.unit.Dp) {
     val st = model.current
@@ -627,6 +633,13 @@ private fun CloseDialog(model: CashRegisterModel, d: CashDialog.Close, currency:
                         Text(Money.format(v.toDouble() * d.count.count(v), currency), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
+                    Text("Reste (pièces)", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(140.dp))
+                    TextInput(d.count.rest, { t -> model.edit { (it as CashDialog.Close).copy(count = it.count.withRest(t)) } }, modifier = Modifier.width(200.dp), placeholder = "0", isError = d.count.restAmount == null)
+                    Spacer(Modifier.weight(1f))
+                    Text(Money.format(d.count.restAmount ?: 0.0, currency), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("Le montant des pièces et de tout ce qui n'entre pas dans les valeurs ci-dessus.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FormField("Note (facultatif)") { TextInput(d.notes, { v -> model.edit { (it as CashDialog.Close).copy(notes = v) } }, modifier = Modifier.fillMaxWidth()) }
             }
         }

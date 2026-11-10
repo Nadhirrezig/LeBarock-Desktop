@@ -50,6 +50,23 @@ class CashRegisterTest {
     }
 
     @Test
+    fun the_z_adds_the_rest_typed_for_the_coins() {
+        var c = CashCount(listOf(50, 20)).plus(50).withRest("3,450 DT")
+        assertEquals("3,450", c.rest, "digits and the separator only")
+        assertEquals(3.45, c.restAmount)
+        assertEquals(53.45, c.total)
+        assertEquals(-0.05, c.difference(53.5))
+        assertEquals(mapOf(50 to 1), c.breakdown, "the rest is not a value")
+        c = c.withRest("")
+        assertEquals(0.0, c.restAmount, "empty = nothing besides the values")
+        assertEquals(50.0, c.total)
+        c = c.withRest("1,2,3")
+        assertNull(c.restAmount, "not an amount: asked again before the Z")
+        assertEquals(50.0, c.total)
+        assertEquals(7.5, CashCount(emptyList()).withRest("7.5").total, "no values set: the whole count can be typed")
+    }
+
+    @Test
     fun amounts_and_dates_read_as_typed_at_the_counter() {
         assertEquals(12.5, parseAmount("12,5"))
         assertEquals(12.5, parseAmount(" 12.5 "))
@@ -87,7 +104,7 @@ class CashRegisterTest {
     private val state = """{"enabled":true,"enforce_session":true,"caisse":{"id":1,"name":"Caisse"},
         "session":{"id":7,"code":"AB12-3","z_number":3,"status":"active","opened_by":"Hela","opening_cash":100,"expected_cash":80},
         "kpi":{"opening_cash":100,"sales_cash":0,"cash_in":30,"safe_drops":50,"expected_cash":80,"transactions":2},
-        "transactions":[{"id":2,"type":"safe_drop","label":"Dépôt au coffre","amount":50,"decreases":true,"reason":"Coffre"}],
+        "transactions":[{"id":2,"type":"safe_drop","label":"Prélèvement coffre","amount":50,"decreases":true,"reason":"Coffre"}],
         "count_values":[50,20,10,5],"offline":{"devices":[],"waiting":{"count":0,"amount":0}}}"""
 
     private val ticket = """{"restaurant":{"name":"Le Baroque"},"order":{"number":"RAPPORT Z N°3","dateTime":"10 nov. 2026 23:10"},
@@ -101,7 +118,7 @@ class CashRegisterTest {
         assertEquals("AB12-3", opened.state.session!!.code)
         assertEquals("100.0", Json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject["opening_cash"].toString())
 
-        server.enqueue(json("""{"status":"success","message":"Dépôt au coffre enregistré.","data":$state}"""))
+        server.enqueue(json("""{"status":"success","message":"Prélèvement coffre enregistré.","data":$state}"""))
         cash.movement("safe_drop", 50.0, " Coffre ").getOrThrow()
         val move = server.takeRequest()
         assertEquals("/api/mobile/cash-register/movements", move.url.encodedPath)
@@ -120,7 +137,7 @@ class CashRegisterTest {
             "session":{"id":7,"code":"AB12-3","status":"pending_approval","expected_cash":100,"counted_cash":95,"discrepancy":-5},
             "stock":{"ok":true,"till_linked":true,"department":"Bar","lines":[{"name":"Coca","unit":"pcs","sold":12,"left":3,"to_refill":9}]}},
             "print":{"type":"sunmi","url":"http://localhost:9100/print","token":"","receipt":$ticket},"print_result":{"target":"device","status":"device"}}"""))
-        val z = cash.close(CashCount(listOf(50, 20, 5)).plus(50).plus(20).plus(20).plus(5).breakdown, " Fin ").getOrThrow()
+        val z = cash.close(CashCount(listOf(50, 20, 5)).plus(50).plus(20).plus(20).plus(5).breakdown, 2.5, " Fin ").getOrThrow()
         assertEquals("Z-3", z.value.number)
         assertEquals(-5.0, z.value.session!!.discrepancy)
         assertEquals(9.0, z.value.stock!!.lines.single().toRefill)
@@ -130,6 +147,7 @@ class CashRegisterTest {
         assertTrue("Ticket #RAPPORT" !in paper, "an X / Z keeps its title, no « Ticket # »")
         val body = Json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
         assertEquals("""{"50":1,"20":2,"5":1}""", body["breakdown"].toString())
+        assertEquals(2.5, body["rest"]!!.jsonPrimitive.content.toDouble(), "the coins, as an amount")
         assertEquals("Fin", body["notes"]!!.jsonPrimitive.content)
         assertEquals("device", body["print_target"]!!.jsonPrimitive.content)
 

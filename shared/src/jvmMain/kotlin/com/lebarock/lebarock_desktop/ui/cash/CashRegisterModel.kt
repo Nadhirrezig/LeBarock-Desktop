@@ -24,11 +24,11 @@ import kotlinx.coroutines.launch
 
 enum class CashTab(val label: String) { SESSION("Session"), REPORTS("Rapports X / Z"), EXPENSES("Dépenses") }
 
-/** The web's three drawer movements, with its reason hints. */
+/** The web's three drawer movements, under the web's names, with its reason hints. */
 enum class Movement(val api: String, val title: String, val hint: String, val verb: String) {
-    CASH_IN("cash_in", "Entrée d'espèces", "Ex. monnaie ajoutée au fond de caisse", "entrer dans le tiroir"),
-    CASH_OUT("cash_out", "Sortie d'espèces", "Ex. dépôt à la banque", "sortir du tiroir"),
-    SAFE_DROP("safe_drop", "Dépôt au coffre", "Ex. trop d'espèces dans le tiroir", "mettre au coffre"),
+    CASH_IN("cash_in", "Entrée de caisse", "Ex. monnaie ajoutée au fond de caisse", "entrer dans le tiroir"),
+    CASH_OUT("cash_out", "Sortie de caisse", "Ex. dépôt à la banque", "sortir du tiroir"),
+    SAFE_DROP("safe_drop", "Prélèvement coffre", "Ex. trop d'espèces dans le tiroir", "mettre au coffre"),
 }
 
 /** A window on the Caisse: the amount (and reason) first, then the web's « Confirmer » step. */
@@ -197,7 +197,8 @@ class CashRegisterModel(
                     else -> d.copy(confirm = true, error = null)
                 }
             }
-            is CashDialog.Close -> dialog = d.copy(confirm = true, error = null)
+            is CashDialog.Close ->
+                dialog = if (d.count.restAmount == null) d.copy(error = "Le reste doit être un montant (ex. 3,450).") else d.copy(confirm = true, error = null)
             null -> Unit
         }
     }
@@ -212,7 +213,7 @@ class CashRegisterModel(
             is CashDialog.Close -> {
                 dialog = d.copy(busy = true)
                 scope.launch {
-                    cash.close(d.count.breakdown, d.notes)
+                    cash.close(d.count.breakdown, d.count.restAmount ?: 0.0, d.notes)
                         .onSuccess { printed ->
                             dialog = null
                             shown = ReportShown(printed.value, printed.print)

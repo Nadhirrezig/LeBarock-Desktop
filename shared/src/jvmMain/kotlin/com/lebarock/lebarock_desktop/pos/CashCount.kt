@@ -7,10 +7,10 @@ import java.time.format.DateTimeParseException
 
 /**
  * The Z's count, as the web's « Compter par valeur » (`Dashboard::closeBreakdown`): one line per note or coin value
- * set in Settings (high to low), − / + per line; the counted total, and against the cash expected the difference
- * (positive = more than expected).
+ * set in Settings (high to low), − / + per line; « Reste (pièces) », an amount typed for the coins and whatever the
+ * values do not cover; the counted total, and against the cash expected the difference (positive = more than expected).
  */
-data class CashCount(val values: List<Int>, val counts: Map<Int, Int> = emptyMap()) {
+data class CashCount(val values: List<Int>, val counts: Map<Int, Int> = emptyMap(), val rest: String = "") {
 
     fun count(value: Int): Int = counts[value] ?: 0
 
@@ -22,7 +22,13 @@ data class CashCount(val values: List<Int>, val counts: Map<Int, Int> = emptyMap
     fun set(value: Int, text: String): CashCount =
         if (value in values) copy(counts = counts + (value to (text.filter(Char::isDigit).take(5).toIntOrNull() ?: 0))) else this
 
-    val total: Double get() = round2(values.sumOf { it.toDouble() * count(it) })
+    /** « Reste (pièces) » as typed: digits and one separator only. */
+    fun withRest(text: String): CashCount = copy(rest = text.filter { it.isDigit() || it == ',' || it == '.' }.take(10))
+
+    /** The rest as an amount (empty = 0), null when what was typed is not an amount. */
+    val restAmount: Double? get() = if (rest.isBlank()) 0.0 else parseAmount(rest)?.takeIf { it >= 0 }
+
+    val total: Double get() = round2(values.sumOf { it.toDouble() * count(it) } + (restAmount ?: 0.0))
 
     fun difference(expected: Double): Double = round2(total - expected)
 

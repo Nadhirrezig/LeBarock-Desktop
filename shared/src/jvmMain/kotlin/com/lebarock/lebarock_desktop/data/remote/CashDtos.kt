@@ -122,6 +122,8 @@ data class CashMovementRequest(val type: String, val amount: Double, val reason:
 data class CloseSessionRequest(
     /** value of a note or coin → how many were counted. */
     val breakdown: Map<String, Int>,
+    /** « Reste (pièces) »: the amount counted besides the values. */
+    val rest: Double? = null,
     val notes: String? = null,
     @SerialName("print_target") val printTarget: String? = null,
 )

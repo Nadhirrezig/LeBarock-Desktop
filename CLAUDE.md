@@ -1,459 +1,106 @@
 # LeBarock — AltosPOS desktop (counter app)
 
-Windows desktop app for the **counter PCs** of **Le Baroque** (restaurant / bar). It keeps only the point-of-sale
-work of the web caisse (`LeBarock-RestaubarCaisse`): POS, tables, orders, payment, cash register. The web caisse stays
-on the counter for management and as a backup. Kotlin + Compose Multiplatform (Desktop, JVM). Name on Windows:
-**AltosPOS** (the app); the restaurant is Le Baroque.
+Windows app for the **counter PCs** of **Le Baroque** (restaurant / bar): the point-of-sale work of the web caisse
+(`LeBarock-RestaubarCaisse`) — POS, tables, orders, payment, cash register. The web stays on the counter for management
+and as a backup. Kotlin + Compose Multiplatform (Desktop, JVM). Name on Windows: **AltosPOS**. Older detail (how each
+step was built, run logs) is in git history (cleaned up 2026-11-10).
 
 ## Sibling repos
 
 | Repo | Role | Contract with this app |
 |------|------|------------------------|
-| `LeBarock-RestaubarCaisse` | Laravel POS, the server and only source of truth | Same `/api/mobile/*` contract as the handheld (Sanctum token, `device_name` `altospos-desktop`). New caisse endpoints only where the review showed a need (cash register, expenses, discount, table operations, print jobs). Overview of step 4 in its `CLAUDE.md`. |
-| `AltosPOS-Mobile` (branch `LeBarokMobileapp`) | Sunmi handheld app | The model: API layer, repository logic, ticket layouts and later the offline code are **copied** from it (no shared module yet). |
-| Stock back / front | Stock | None directly. |
+| `LeBarock-RestaubarCaisse` | The server, only source of truth | `/api/mobile/*` (Sanctum token, `device_name` `altospos-desktop`); the endpoints step 4 added are listed in its `CLAUDE.md` ("Step 4 — desktop app, caisse side"). |
+| `AltosPOS-Mobile` (branch `LeBarokMobileapp`) | Sunmi handheld app | The model: API layer, repository logic, ticket layouts and the offline code are **copied** from it (no shared module). |
+| Stock back / front | Stock | None. |
 
 ## Stack and commands
 
-- Kotlin 2.4.21, Compose Multiplatform 1.12.2 (material3 1.12.0-alpha03), Gradle 9.5.1, JDK 21 (Gradle provisions Azul
-  Zulu 21 through foojay), versions from the JetBrains wizard (kept, client 2026-11-08). Retrofit 3.0.0, OkHttp 5.5.1,
-  kotlinx.serialization 1.12.0, material-icons-extended 1.7.3, JNA 5.19.1 (Windows DPAPI and registry).
-- Modules: `shared` (all app code, `src/jvmMain`; tests in `src/jvmTest`), `desktopApp` (window, installer settings).
-- Run: `gradlew :desktopApp:run` (Windows: `gradlew.bat`). Tests: `gradlew :shared:jvmTest`.
-- Installer: `gradlew :desktopApp:packageMsi` **on Windows** (jpackage + WiX, downloaded by the Compose plugin) →
-  `desktopApp/build/compose/binaries/main/msi/AltosPOS-x.y.z.msi`. Raise `altospos.version` (gradle.properties or
-  `-Paltospos.version=`) for each release: MSI versions are MAJOR.MINOR.BUILD; `upgradeUuid` never changes, so a new
-  MSI replaces the installed one.
-- Data folder: `%APPDATA%\AltosPOS` (`settings.json`, `logs\altospos-N.log`, `certs\`, `altospos.lock`, `.secret.key`
-  off Windows only);
-  `-Daltospos.home=…` overrides it (tests, dev).
-- **Cloud sessions:** Maven Central, Google Maven and foojay answer, but `cdn.azul.com` (the JDK download) is blocked:
-  build with the local JDK 21 by setting `gradle/gradle-daemon-jvm.properties` aside for the build (and putting it
-  back). Maven Central rate-limits (429): retry. The app runs under `Xvfb` + `xdotool` for screenshots
-  (`apt-get install xdotool`); the caisse runs with `php artisan serve` on a sqlite file (see the caisse `CLAUDE.md`).
-  **Never** use `/*` inside a KDoc (e.g. a route like `/api/mobile/*`): it opens a nested comment.
+- Kotlin 2.4.21, Compose Multiplatform 1.12.2 (material3 1.12.0-alpha03), Gradle 9.5.1, JDK 21. Retrofit 3, OkHttp 5,
+  kotlinx.serialization, material-icons-extended, JNA (Windows DPAPI and registry).
+- Modules: `shared` (all app code `src/jvmMain`, tests `src/jvmTest`), `desktopApp` (window, tray, installer settings).
+- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**90 tests**, 2026-11-10).
+- Installer: `gradlew :desktopApp:packageMsi` **on Windows** → `desktopApp/build/compose/binaries/main/msi/AltosPOS-x.y.z.msi`.
+  Raise `altospos.version` for each release (MAJOR.MINOR.BUILD); `upgradeUuid` never changes.
+- Data folder `%APPDATA%\AltosPOS` (`settings.json`, `logs\`, `certs\`, `cache\images`, lock file); `-Daltospos.home=` overrides it.
+- **Cloud sessions:** `cdn.azul.com` is blocked — build with the local JDK 21 by setting `gradle/gradle-daemon-jvm.properties`
+  aside for the build; Maven Central may answer 429 (retry). Screenshots: packaged app (`createDistributable`) under
+  `Xvfb` + `xdotool`, caisse with `php artisan serve` on a sqlite file. **Never** write `/*` inside a KDoc.
 
 ## Working rules (from the client)
 
-- **Big task → review first** in the session chat (current state, plan, decisions, effort), wait for the OK, then build
-  in small steps the client tests. Effort quoted in the review is the depth of work to deliver for each step.
-- **No review/notes `.md` files in the repos.** `CLAUDE.md` is only for tracking and planning.
-- Ask before building when anything is unclear; confirm intent even when it seems obvious.
+- **Big task → review first** in the chat, then small steps the client tests. Ask before building; confirm intent even
+  when obvious. Each step: questions first, build, run it end to end, tests, CLAUDE.md, commit and push.
+- **No review / notes `.md` files in the repos.** `CLAUDE.md` is only for tracking and planning.
 
-## Decisions (review of 2026-11-08, approved by the client)
+## Decisions in force
 
-- **Server address** = protocol + IP + port, typed in Réglages like on the handheld (default HTTPS 443), with
-  "Tester la connexion". Offline mode comes later, with the handheld's logic (`/api/sync/*`, `kind: "desktop"`).
-- **Sign-in:** the restaurant's accounts (kept on the PC, refreshed from the caisse), pick one, type its password
-  ("Mot de passe / PIN", as on the Sunmi). **The account decides the Caisse** (menu, drawer, session, stock till);
-  Admin / Gérant may switch it (the caisse's terminal switch, kept on the account).
-- **Shared counter:** "Changer d'utilisateur", and the session closes after **5 min** without a click, key or touch
-  (Réglages: Jamais / 2 / 5 / 10 / 15 / 30 min), warning 30 s before; **never while a cart has unsent lines or a
-  payment window is open** (those screens hold the lock). Closing = token deleted on the caisse, back to sign-in;
-  nothing is lost (orders, payments and cash session belong to the Caisse). The token is never written to disk:
-  each start of the app goes through the sign-in.
-- **Accueil buttons by rights** (`abilities`): POS and Tables (orders), Commandes (show_orders), Encaisser
-  (take_payment), Caisse (cash_register), Réglages (everyone). A kitchen account only gets Réglages (its screen is the
-  22" kitchen screen's Android app).
-- **Printing (D2), like the Sunmi:** Réglages → « Impression des tickets »: « Sur cet appareil » (default: the app
-  prints its own bill / receipt / X / Z from the caisse's ticket JSON on the counter printer, connected by **USB**
-  (Windows printer, raw ESC/POS through `javax.print`) **or Ethernet** (IP + port 9100)) / « Imprimante de la caisse »
-  (the caisse prints on the Caisse's printer). "Directe" print agent: collects the caisse's print jobs for this
-  printer when it is on USB (web backup, handhelds on « Imprimante de la caisse »); the branch key is fetched by an
-  admin signing in once in Réglages. Keeps running in the Windows tray when the window is closed; starts with Windows.
-- **Tables (D4): every operation of the web**: floor by area with live state (libre, occupée, addition demandée,
-  réservée + next reservation, "Prêt n", QR count, waiting for stock), open with couverts, add rounds, release,
-  transfer, merge, split by item, change waiter, customer, remove an extra charge, cancel check / line, Addition,
-  Encaisser, payment-method correction cash ⇄ card, "Vérifié" for offline checks. Only QR approvals are left out.
-- **X / Z (D2 caisse + D6):** the existing X / Z section switches (Settings → Sessions de caisse) get a « Ticket X / Z :
-  Complet / Résumé » choice; the desktop screen shows exactly what prints. The X / Z currency format is fixed to follow
-  the currency settings (screen, thermal, Sunmi, desktop).
-- **Not included:** cash drawer, customer display, barcode, second screen, kitchen screen, waiter "Prêt"
-  notifications, QR approvals.
-- **HTTPS trust:** Java's list + the **Windows certificate store** (mkcert's rootCA installed in Windows) + root
-  certificates imported in Réglages → Certificat (`certs\`). Errors say what to do (certificate not trusted, made for
-  another address, HTTP port, port closed, no answer, not a caisse…).
-- One AltosPOS per Windows session (lock file): a second copy would sign in and, from D2, print twice.
-- **Style (client, 2026-11-08, after D1: "buttons, texts, margins and paddings must be right"; Réglages had display
-  issues):** one set of sizes for every screen (`ui/theme/Dimens`): spacing in steps of 8, every button and field
-  48 dp, a window's main action 56 dp, one corner radius (10), text never below 14 sp, choices shown in green with a
-  check, choice boxes as wide as their longest label (nothing cut, nothing moves), a scrollbar on every scrolling
-  page, label above each field, every line of a block on one left edge. Réglages stays **one page** (client chose it
-  over a side menu); only the server has « Enregistrer » (greyed until something changes), every other section saves
-  on each change and says « Enregistré automatiquement ». Checked at 1366 × 768 and at the sizes Windows 125 % / 150 %
-  leave (1093 × 614, 1280 × 720).
-- **Closing the window** (with a tray): AltosPOS stays in the tray (the "Directe" printing goes on), the counter's
-  session ends; « Quitter AltosPOS » in the tray menu ends it. Without a tray (not Windows), closing quits.
-- **D3 (client, 2026-11-08):** the POS opened from Accueil has a **table picker and « À emporter »** (shown when the
-  restaurant takes take-away orders, as on the web); the **cart copies the web POS's UI and logic** (`pos/kot_items`,
-  `pos/order_items`, `Pos::calculateTotal`); **Commandes = today's orders with the status chips** (as the handheld);
-  **« Annuler la commande » works like the web everywhere**: the order stays « Annulée » with its reason (list + text),
-  the handheld's cancel too (it used to delete the order); the caisse's thermal bill date fixed in the same step.
-- **Item photos (client, 2026-11-08):** "do like the web": a photo on each item card, the web's food icon for an item
-  without one, square cards as on the web.
-- **D4 (client, 2026-11-08):** the floor **looks like the web's Tables page** (full-colour tiles, area tabs, legend);
-  an **occupied table opens the POS on its check, like the web** (the check's actions live in that POS's order panel
-  and in Commandes); a **free table asks its covers and opens the POS — nothing is recorded on the caisse until
-  « Envoyer »**; the floor refreshes **every 15 s, like the web** (and at once after an action, and when coming back).
-- **D5 (client, 2026-11-10: "follow the web logic"):** the payment window **copies the web's** (`Order/AddPayment`,
-  May 2026 layout); the **discount lives in the POS cart, like the web** (« Ajouter une remise » in the totals, fixed or
-  %), shown in the window's summary but not changed there; the **receipt prints by itself** once the check is settled
-  (Réglages → « Impression des tickets »), the window then shows the change and « Réimprimer »; « Encaisser » from **every
-  entry**: the POS (« Encaisser Ticket »), Commandes (« Encaisser » on a billed or on-credit check, as the web), Accueil
-  (« À encaisser »: the checks still to pay, every day) and the floor (an occupied table opens the POS on its check).
-- **D6 (client, 2026-11-10):** « Caisse » = **the web's Caisse page + the list of past X / Z**, always on the account's
-  own Caisse (open with a float, cash in / out / safe drop, figures and movements, X, Z, the stock panel with « Envoyer la
-  demande au stock » after the Z); the Z is **counted by notes and coins like the web** (the values of Settings); the
-  expenses are **the web's form + the day's list** (no receipt file; edit / delete stay on the web); **every action that
-  moves money or closes the session asks « Confirmer »**, like the web. The Z's approval stays on the web.
-- **Window sizes (client, 2026-11-08):** the counter PC stays at **100 %**. The 125 % size is still checked as the
-  responsive case ("not a bug, it is how the responsiveness should act"); 100 % is the reference.
+- **Server** = protocol + IP + port in Réglages, « Tester la connexion ». HTTPS trust: Java + Windows store + certificates
+  imported in Réglages.
+- **Sign-in:** the restaurant's accounts, password as PIN. **The account decides the Caisse** (Admin / Gérant may switch).
+  Token in memory only. Idle lock 5 min (Réglages), warning 30 s before, **never while a cart, a payment window or a
+  Caisse window is open**. One AltosPOS per Windows session.
+- **Accueil by rights:** POS, Tables, Commandes, Encaisser, Caisse, Réglages.
+- **Style (client):** one set of sizes (`ui/theme/Dimens`): spacing in steps of 8, buttons and fields 48 dp, main action
+  56 dp, text ≥ 14 sp, choices green with a check, a scrollbar on every scrolling part, label above each field.
+  Réglages is one page. **The counter PC stays at 100 % (1366 × 768 is the reference); 125 % (1093 × 614) is checked as
+  the responsive case.**
+- **Printing:** « Sur cet appareil » (the app prints the caisse's ticket JSON on the counter printer, USB via the Windows
+  spooler or Ethernet port 9100) or « Imprimante de la caisse ». « Directe » agent for USB print jobs (branch key fetched
+  once by an admin). Tray: closing the window keeps the agent running and ends the session; starts with Windows.
+- **POS (D3):** web cart's UI and logic, table picker + « À emporter », item photos like the web. **Cancel keeps the order
+  « Annulée » with its reason.**
+- **Tables (D4):** the web's floor; an occupied table opens the POS on its check; a free table records nothing until
+  « Envoyer »; refresh every 15 s. Every web operation except QR approvals.
+- **Encaisser (D5):** the web's payment window; discount in the POS cart like the web; receipt printed by itself once
+  settled; « Encaisser » from the POS, Commandes, Accueil (« À encaisser », every day) and the floor.
+- **Caisse (D6):** the web's Caisse page + past X / Z on the account's Caisse; Z counted by notes and coins; expenses = web
+  form + the day's list; every money action asks « Confirmer »; the Z's approval stays on the web.
+- **Not included:** cash drawer, customer display, barcode, kitchen screen, waiter notifications, QR approvals.
 
-## How D1 is built (2026-11-08)
+## How the app is organised
 
-- `AppInfo` (name, version from `-Daltospos.version`, data folder), `AppLog` (journal, 5 × 1 MB, never a password /
-  token / key), `SingleInstance`, `AppContainer`.
-- `data/settings`: `ServerAddress` (protocol / host / port, validation with French messages, a pasted URL fills all
-  three), `SettingsStore` (`settings.json`, atomic write, a damaged file kept as `.bad`, unknown keys ignored):
-  address, restaurant name and currency from the last test, idle minutes, the account list, the last account.
-- `data/remote`: `AltosApi` (the handheld's, without kitchen / waiter calls), `Dtos` (copied; `AbilitiesDto` + the
-  counter rights, nullable for a caisse older than step 4), `ApiClient` (Bearer, `Accept: application/json`,
-  User-Agent `AltosPOS-Desktop/x`, short-timeout client for the test), `TrustStore` (composite trust manager, import /
-  remove a root certificate: refuses a non-CA certificate).
-- `data/ApiFailure`: every failure → `FailureKind` + French message + hint (Laravel error bodies read as on the
-  handheld: first validation message, `code`, `order_id`, `can_force`). 401 ends the session.
-- `data/CaisseRepository`: test (ping, restaurant, server clock gap: warning past 2 min), save (another server drops
-  the old account list), accounts (kept), login / me / logout, terminals / switch.
-- `data/session`: `Rights.of(abilities)` (fallbacks for an older caisse), `Session` (memory only), `SessionHolder`.
-- `ui`: `ScreenModel` (state holder with a UI-thread scope, no Android ViewModel), `Navigator` (small back stack),
-  `IdleMonitor` (AWT listener on mouse / key / wheel, holds), theme (handheld's green, larger type, light only),
-  Réglages (Serveur, Certificat, Session, Application: version, Java, folder, journals), sign-in (search ignoring
-  case / accents, Enter opens a single match, last account first, password window with keypad, Enter / Esc),
-  Accueil (restaurant, clock, Caisse chip + picker for managers, user, "Changer d'utilisateur", tiles; sections not
-  built yet say which step brings them; a section needing a Caisse without one opens "Pas de caisse").
-- Window "AltosPOS — Le Baroque", maximized, minimum 1024 × 680, icon from the handheld's logo
-  (`desktopApp/icons`: .ico for the MSI, .png). Closing the window signs out on the caisse (2 s at most).
-- MSI: `AltosPOS`, menu group + desktop shortcut + folder choice, fixed `upgradeUuid`, ProGuard off, modules
-  `java.naming`, `jdk.crypto.ec`, `jdk.unsupported` (+ `jdk.crypto.mscapi` when built on Windows, for the Windows
-  certificate store).
-- Caisse (D1): `abilities` gained `show_orders`, `cash_register`, `use_cash_register`, `apply_discount`,
-  `give_credit`, `assign_waiter`, `create_expense`, `manage_settings` (`RightsTest`).
-- Tests (`shared/src/jvmTest`, 34): address, settings file, rights → buttons, idle lock, and `CaisseRepositoryTest`
-  against a local server answering like the caisse — real HTTPS with a test CA (refused, then trusted after import;
-  certificate for another address), HTTPS to an HTTP port, port closed, not a caisse (404 / HTML / empty), 502,
-  account list kept, sign-in (token in memory only, Bearer sent after), wrong password / other refusal / throttle,
-  401 ends the session, sign-out with the caisse down, Caisse switch.
-- Checked end to end (2026-11-08) on a local caisse (Le Baroque card, `lebaroque:setup`) under Xvfb: first start →
-  Réglages, test + save, sign-in list, wrong then right PIN (keypad), Serveur / Caissier / Gérant buttons, Gérant
-  without Caisse → picker → Caisse, Réglages from Accueil, idle lock at 2 min with its warning.
+- `data/`: `CaisseRepository` (test, sign-in, accounts, Caisse switch), `OrdersRepository` (menu, tables, orders, the
+  check's operations, payments, tip, discount), `CashRegisterRepository` (session, movements, X / Z, reports, expenses),
+  `PrintOutcomes` (where a ticket went), `ApiFailure` (French messages + hints), `settings/SettingsStore`, `remote/*`
+  (Retrofit API, DTOs), `session/` (`Rights.of(abilities)` with fallbacks for an older caisse).
+- `pos/`: plain, tested logic — `Cart` + `CartMath` (the web's `calculateTotal`, discount), `Payment` (`PaymentForm`:
+  methods, keypad, credit, equal / custom / by-article splits; `TipForm`), `CashCount` (Z count by value, amounts, dates).
+- `print/`: `ReceiptRenderer` (48 / 32 columns; a plain number reads « Ticket #42 », an X / Z keeps its title),
+  `EscPosEncoder`, `TicketTransport`, `TicketPrinter`, `PrintAgent`.
+- `ui/`: `ScreenModel` + `Navigator`; screens `login`, `home`, `settings`, `pos`, `tables`, `orders`, `check`
+  (`CheckActions`, shared by the POS and Commandes), `payment` (`PaymentFlow` + `PaymentWindow`), `cash`
+  (`CashRegisterModel` + `CashRegisterScreen`, ticket preview as printed).
 
-## How D2 is built (2026-11-08)
+## Steps done (step 4)
 
-- **Style system:** `ui/theme/Dimens` (sizes), typography floor 14 sp, scrollbar style in `AltosTheme`;
-  `ui/common/Controls.kt`: `AppButton` (primary / secondary / text / danger, 48 or 56 dp, hand cursor), `TextInput`
-  (48 dp, green focus, red error), `FormField` (label above, help or error under), `ChoiceRow` (equal boxes sized to the
-  widest label, check space always kept), `SelectField`, `AppTopBar` (72 dp), `ScrollPage` (centred 960 dp + scrollbar),
-  `SectionCard`, `SubHeading`, `InfoRow` (one text size, paths break after a separator), `AppDialog`, `AutoSavedNote`.
-  Réglages, Connexion (PIN window compact under 760 dp of height: 48 dp keys, buttons keep their height), Accueil
-  (tiles one height) and their windows use only these.
-- **Printing** (`print/`): `ReceiptPayload` (the caisse's ticket JSON, copied from the handheld + `remainingDue`),
-  `ReceiptRenderer` (ported; section titles of the X / Z, test ticket with an edge-to-edge line), `EscPosEncoder` (ESC @,
-  code page PC858 = 19 / Windows-1252 = 16 / sans accents, bold, double size, feed, partial cut, QR; narrow spaces,
-  dashes and French quotes written plainly), `TicketTransport` (`WindowsPrinterTransport`: raw bytes to the Windows
-  spooler by printer name, `DocFlavor.BYTE_ARRAY.AUTOSENSE`; `NetworkTransport`: port 9100, 4 s connect), `TicketPrinter`
-  (one ticket at a time, French messages). Settings `PrinterConfig` (target device / caisse, USB / Ethernet, Windows
-  printer, IP / port, 58 / 80 mm, charset). MSI modules + `jdk.charsets` (PC858) + `jdk.localedata` (French dates: the
-  installed app wrote "Sun 8 Nov" without it).
-- **Impression « Directe »** (`print/PrintAgent`): `AgentClient` (OkHttp without the session token, header
-  X-AltosPos-KEY): `pull?printer_id=` every 2 s → job bytes (`payload.base64`, else `text` read as Latin-1) →
-  `TicketPrinter.printRaw` (cut added when asked and missing) → `PATCH /api/print-jobs/{id}` done / failed with the
-  printer's name; 401 → "clé refusée", stops; caisse down → retry 10 s; printer error → job failed, shown. Status for
-  Réglages and the tray. Set-up (`PrintingModel`): an admin's sign-in made only for this (`device_name`
-  `altospos-desktop-agent`, token ended right after) → `GET /api/mobile/desktop/print-agent` → key sealed with
-  `SecretBox` (DPAPI on Windows; AES-GCM + key file elsewhere) + printers; printer list refreshed later with the key
-  (`/api/printer-details`). A printer not in "Directe" on the caisse is flagged.
-- **Tray / startup** (`desktopApp/main.kt`): Compose `Tray` (Ouvrir, état de l'impression « Directe », Quitter);
-  closing hides the window and ends the session (`AppContainer.lockRequests`), a one-time notification says AltosPOS
-  stays open; `--tray` starts hidden; `WindowsStartup` (HKCU\…\Run "AltosPOS" = `"<AltosPOS.exe>" --tray`, JNA
-  Advapi32), on at the installed app's first start (`startWithWindows` null), Réglages → Application to change it.
-- Tests: 53 (+ `PrintingTest` 12: code pages, typographic characters, styles, QR, no line wider than 58 / 80 mm,
-  bill with "Reste dû", X / Z layout, test ticket, Ethernet to a local socket, refused port, nothing sent before a printer
-  is chosen, cut once, one ticket at a time; `PrintAgentTest` 7: exact bytes printed and reported done, older job without
-  base64, printer failure reported failed, refused key stops, caisse down retried, off / no printer does nothing, key
-  sealed). `CaisseRepositoryTest`'s "HTTPS to an HTTP port" now uses a server that answers at once (it was flaky).
-- Checked end to end (2026-11-08) with the local caisse under Xvfb, packaged app: Réglages at 1366 × 768 and 1093 × 614;
-  "Imprimer un test" on a stand-in Ethernet printer (accents right in PC858, 48 columns, cut); « Directe » set-up refused
-  for a Caissier, done by the admin (temporary tokens deleted); an X queued by the caisse and a handheld bill sent to
-  « Imprimante de la caisse » printed by the agent within seconds, both "done" on the caisse. Not checked here: USB
-  printing through a real Windows driver, the tray and the registry (no Windows): the client's test.
+- **D1** Réglages, sign-in, Accueil by rights, Caisse picker, idle lock, MSI settings.
+- **D2** style system, ticket printing (USB / Ethernet, test print), « Directe » agent, tray, start with Windows.
+- **D3** POS (sections, search, web cart, table picker, à emporter, send, round, bill, stock waiting / force) and Commandes.
+- **D4** Tables like the web floor, the check's operations (move, merge, split, waiter, customer, charges, payment fix,
+  Vérifié, cancel, line taken off); reviewed and fixed 2026-11-10.
+- **D5** Encaisser: cash + change, TPE, credit, split (equal / amounts / by article), tip, receipt; discount in the cart;
+  « À encaisser » list. Found: tickets printed « Remise (1%) » for 10 % (fixed caisse-side).
+- **D6** Caisse: session with float, cash in / out / safe drop, X, Z counted by value with difference, waiting for
+  approval, stock request after the Z, past X / Z, expenses. Found: X / Z printed « Ticket #RAPPORT X » (fixed); the
+  caisse's count values could not be saved (fixed caisse-side).
 
-## How D3 is built (2026-11-08)
+Each was run end to end on the packaged app at 1366 × 768 (and 1093 × 614). Not checked here: a real Windows screen,
+USB printing through a Windows driver, tray and registry — the client's test.
 
-- **Data:** `data/OrdersRepository` (menu, tables, POS context, orders, send / round / bill / reprint / send again /
-  remove a waiting line / cancel with reason / « Servi »; a ticket asked prints here from the caisse's JSON with
-  « Sur cet appareil », or the caisse's `print_result` with « Imprimante de la caisse »), `data/Money` (the caisse's
-  `currency_format_exact`: at least 2 decimals, its separators and symbol position; the currency is read fresh from
-  `pos-context` and kept), `pos/Cart` (`Cart`, `CartLine`, `CartMath` = the web's arithmetic: each line to 2 decimals,
-  taxes and percent charges on the total, charges only with lines; `sectionsOf` in the Tri order; `searchItems`
-  ignoring case and accents; `ModifierRules`; `tableLabel`: a digits-only code reads « T12 »).
-- **POS** (`ui/pos/PosModel`, `PosScreen`): menu on the left (section tiles « n articles », « ‹ Sections », search over
-  the whole menu — Enter adds a single match —, item cards with the price or « Voir les variations », « Épuisé »;
-  menu choice only on a Caisse without its own menu), the web cart on the right, always visible: « Sur place / À
-  emporter » (when both are allowed), « Commande #n » (the next number, a preview), « Choisir la table » (areas, free /
-  occupied / reserved; a free table asks the covers, 1 by default; an **occupied table opens its check** for a new
-  round), covers stepper, « Note » (the round's note, kitchen ticket), the waiter (a list with « Choisir le serveur »,
-  else the account), lines « name — variation · note · − + · ×qty · bin » with options and the line's note under it
-  (− stops at 1, the same choice adds to its line), « Total · n art. » opening Article(s) / Sous-total / charges (× to
-  take one off a new order) / taxes, « Envoyer », « Encaisser Ticket » (shown greyed until D5), « Imprimer Ticket »
-  (bill + ticket). After an order: a fresh POS (back on « Sur place », next number). Round on an open check (« Nouveau
-  ticket » from Commandes or an occupied table): its lines shown « Envoyé » / « En attente de stock », the new ones
-  editable, « Imprimer Ticket » sends the round then bills. Stock held back: « En attente de stock » window with the
-  stock's message, « Garder en attente » / « Forcer l'envoi » (with the right). A ticket not printed: a window says why
-  (the bill is made). Leaving with lines: « Abandonner la commande ? ». The idle lock is held while the cart has lines.
-  **Short screens** (body under 660 dp: 1366 × 768 once Windows has its bars, 125 %): the header folds into one line
-  (« #4 · Sur place · T3 · 3 couv. · Note · Amel ») that opens its controls in a window; footer buttons 48 dp.
-- **Commandes** (`ui/orders/OrdersModel`, `OrdersScreen`): status chips with counts (Toutes, En cours, Facturées,
-  Payées, À crédit, Annulées), cards (#, status, total, table / à emporter, articles, waiter, time, « Hors ligne »,
-  « À vérifier »), the detail as the web order panel (table · couverts · type · serveur · heure · caisse, cancel reason,
-  round note, « En attente de stock » with Envoyer / Forcer l'envoi, lines by kitchen ticket with its state and « Servi »
-  when ready, lines not sent with a bin when waiting for stock, totals, paid, still due). Actions by state and right:
-  « Nouveau ticket », « Addition », « Addition et impression », « Réimprimer », « Encaisser » (D5, greyed),
-  « Annuler la commande » (list of reasons + comment, one of them required as on the web). Back from a round: Commandes
-  on the same order, with what happened. Times in the PC's own time zone.
-- Window style: `AppDialog` takes its width (no platform maximum), `ScrollArea` (a window's scrolling part, scrollbar
-  only when it overflows), the note windows take the keyboard at once.
-- **Item photos, as the web card** (`pos/menu`; client after D3): `ui/pos/ItemImages` + `ItemPhoto` — the caisse's
-  `image_url` put on the server of Réglages (its `APP_URL` is often `localhost`), fetched through `ApiClient.images()`
-  (the app's HTTPS trust, no token, an HTTP cache of 50 MB in `%APPDATA%\AltosPOS\cache\images` that follows the
-  caisse's cache headers), kept in memory (400); `img/food.svg` and a photo that does not come → the web's food icon,
-  bundled with the app (`resources/item/*.svg`, copied from the caisse's `public/img`), tried again after a minute.
-  Card (`ItemCard`): the photo in a square (cropped, as `object-cover`), the item type's badge at the top left (veg,
-  non-veg, egg, drink; none for « other », which has no icon on the web either), « ÉPUISÉ » over the darkened photo,
-  the name on two lines and the price in a green pill with its currency (« 55.000 DT », 14 sp, never cut), or « Voir les
-  variations »; **the cards fill the row edge to edge, as close to 158 dp as the width allows** (`NearSizeCells`; client,
-  2026-11-08: a grid that stretched the columns that fit made 3 cards of ~195 dp at 125 %, a fixed size left gaps beside
-  the row): from the search box's left edge to the scrollbar, the number of columns whose card width is nearest 158 dp
-  (5 of ~158 at 1366 × 768, 4 of ~143 at 125 %, 8 of ~164 at 1920). Compared with the web POS in a browser at
-  1366 × 768: same columns, photo, icon, badge, pill.
-- Tests: 67 (+ `ItemImagesTest` 5: the URL put on the server of Réglages, the food icon without a call, a photo
-  fetched once then kept, a photo that does not come falls back and is tried again after a minute, no badge for
-  « other »; `PosDataTest` 9: amounts as the caisse writes them, cart merging / « − » / notes, the web's totals,
-  sections / search / options, « Imprimer Ticket » printed here from the caisse's ticket with every field sent
-  (`print_target`, `waiter_id`, `removed_charge_ids`, note), a ticket not printed leaves the bill made, the stock's
-  refusal with what to do, the POS context's currency kept, cancel with its reason, a refused reprint says why).
-- Checked end to end (2026-11-08) on the packaged app with the local caisse (Moon Lounge card, tables added), at
-  1366 × 768 and 1093 × 614: sections, search, variation, line note, table + 3 covers → « Commande #2 envoyée en
-  cuisine » (the caisse has table 3, 3 covers, the waiter, the note, one kitchen ticket); « À emporter » + « Imprimer
-  Ticket » printed here (« 08 nov. 2026 16:38 »); Commandes → « Nouveau ticket » (dessert) → back on the order with its
-  second kitchen ticket; « Addition et impression »; the Gérant cancelled with « Demande du client — table partie »
-  (kept « Annulée »), the Caissier had no cancel button. Not checked here: a round held by the stock (stock off
-  locally; covered by the tests), on a real Windows screen.
+## Roadmap
 
-## How D4 is built (2026-11-08)
-
-- **Data:** `GET /tables` read with what a web tile shows (`TableDto`: open checks + total, `ready_tickets`,
-  `stock_waiting`, `next_reservation`, `session.merged_into`); the order detail with `charges`, `payments`,
-  `customer_info`, `items[].fired`. `OrdersRepository`: `moveOrder`, `mergeOrder`, `splitOrder`, `setWaiter`,
-  `customers`, `setCustomer`, `removeCharge`, `changePaymentMethod`, `markReviewed`, `releaseTable` →
-  `CheckChange(order, message, newOrder)` (the caisse's French message shown as is).
-- **Tables** (`ui/tables/TablesModel`, `TablesScreen`; Accueil tile « Tables / salle »): « Toutes les salles » + one
-  tab per area, the web's legend (Libre green, Occupée blue, Addition demandée amber, Réservée red), per area « Salle ·
-  8 tables » and full-colour tiles: code, places, state chip (« Avec 1 » for a merged table), « 4 couv. · depuis
-  25 min » (« à l'instant »), « #5 · 2 tickets cuisine » or « 2 tickets » + total, « Résa 21:00 · Client · 4 pers. »,
-  « En attente de stock », badges « Prêt n » (top left) and « QR n » (top right). The web's grid: tiles ≥ 260 dp, 4 a
-  row at 1366 × 768, 3 at 125 %, **the tiles of a row share one height** (CSS grid rows). A tap: occupied → POS on its
-  check; merged → the host table's check; seated with nothing ordered (web, handheld) → POS with its covers, and
-  « Commander » / « Libérer » on the tile (confirm); free / reserved → « Nombre de couverts » (−, +, 1 by default) →
-  POS on that table. Refresh every 15 s, « Actualiser », « À jour · il y a 12 s ».
-- **POS from the floor:** `Screen.Pos(orderId | table + covers)`; once the round is sent or billed, or the check is
-  cancelled, the POS goes back to the floor, read again, with the message (« Commande #9 envoyée en cuisine. »).
-- **The check's actions** (`ui/check/CheckActions` + `CheckDialogs`, one piece for the POS and Commandes):
-  `CheckAction.available(order, rights)` — Changer de table / Fusionner / Séparer on a running dine-in check (orders),
-  Changer de serveur (« Choisir le serveur »), Client, Retirer des frais (open check with charges), Vérifié (offline
-  check), Annuler la commande (« Annuler une commande »). « Plus » menu: in the POS order panel's second line (next to
-  covers · serveur · client) and in Commandes' action bar (cancel stays its own red button there). Windows: tables to
-  pick (free ones for a move, seated parties for a merge; the others greyed, the check's own table framed), split with
-  − / + per line (« Créer le nouveau ticket »), waiters (the POS context's list), customer (search by name / phone /
-  e-mail from 2 characters, the search box takes the keyboard, or name + phone + e-mail typed; same phone = same
-  customer), charges with « Retirer », cancel with reasons, a line taken off (waiting for stock: anyone taking orders;
-  sent to no kitchen, a drink: « Annuler une commande »; in a kitchen: not here). The caisse's refusal stays in the
-  window. A merge answers the other table's check: the POS / Commandes follow it.
-- **Commandes:** charges in the totals, « Paiements » with « Corriger : carte / espèces » (« Encaisser » right), the
-  « Plus » menu, removable lines (same rule as the POS).
-- Tests: 75 (+ `TablesDataTest` 8: tile state and labels, who can take a check (move / merge), time seated, the
-  actions per right (waiter, manager, take-away, settled, cancelled), which line comes off, the floor JSON, each call's
-  path and body with the caisse's message, a refusal shown as the caisse wrote it).
-- Checked end to end (2026-11-08) on the packaged app with the local caisse at 1366 × 768 (and 1093 × 614): floor
-  with a ready ticket, a bill asked, a party seated with nothing ordered, a reservation; table 5 → POS → « Changer de
-  table » → 6; table 7 → « Séparer » (#8 created, « 2 tickets » on the tile); « Client » typed; free table 2 → 2 couverts
-  → POS on T2 → « Envoyer » → back on the floor; « Libérer » table 3; table 2 « Fusionner » into 1 (« Avec 1 »);
-  Commandes: a card payment corrected to cash, the waiter changed; « Annuler la commande » from the POS → back on the
-  floor, both tables free. Fixed by running it: tiles of a row had different heights, « Plus » squeezed in the order
-  header at 125 %, the customer search did not take the keyboard, « Addition demandée » cut in the pick tiles.
-
-**Fixed after the D4 review (2026-11-10):** the customer form drops the picked customer once a field is typed over
-(the caisse makes a new one rather than renaming); Commandes shows a split ticket's lines (« Envoyés en cuisine
-(séparés d'une autre commande) »: they keep the original check's kitchen ticket); the POS opened from Commandes comes
-back on the check it ended on (a merge moves it; gone → nothing selected); « Plus » needs `abilities.update_order`
-(`Rights.updateOrder`, the orders right on an older caisse); the last sent line taken off reads « commande annulée »
-(`LineRemoval`); the floor keeps one read at a time (a poll skips while one runs, « Actualiser » cancels it); tile
-buttons 48 dp, spacing from `Dimens`. 76 desktop tests.
-
-## How D5 is built (2026-11-10)
-
-- **Data:** `PaymentContextDto` (+ `tip_note`, discount), `PaymentRequest.split` (`SplitPaymentDto` / `SplitPartDto` /
-  `SplitPartItemDto`: every part in one request, as the web window), `DiscountRequest`, `SendOrderRequest.discount_*`,
-  `OrderCountsDto.toPay`. `OrdersRepository`: `paymentContext`, `pay` (always sends `print_target`; the receipt the caisse
-  hands back for « Sur cet appareil » prints here, its outcome in `Printed.print`), `tip`, `setDiscount`, `orders(toPay)`.
-- **`pos/Payment.kt`** — the web window as data, no screen: `PaymentForm` (methods by right: « À crédit » only with
-  « Give Credit »; the TPE and the credit take the whole due, amount and keypad locked; cash keypad where the first key
-  replaces the amount filled in, two decimals, « Montant exact », quick notes 50 / 100 / 500 / 1000; change / what stays
-  to pay; credit customer picked or name + phone; splits: equal parts of what is left with the cents on the first,
-  free amounts that must make the due, by article with each line shared once at the caisse's unit prices (`items` of the
-  context: discount, taxes, charges and tip shared in); `problem` = what stops « Valider »; `request()` = what the web
-  sends), `TipForm` (% or amount, 5 / 10 / 15 / 20, on the total before the tip; 0 takes it off). `Discount` +
-  `CartMath.totals(…, discount)`: the web's `calculateTotal` (percent of the sub-total or fixed capped at it, taxes and
-  charges on what is left).
-- **`ui/payment/PaymentFlow`** (state holder, one for the POS and one for Commandes) + **`PaymentWindow`**: « Paiement ·
-  Commande #n · total »; « Paiement complet / Partager l'addition »; tiles Espèces / Carte (TPE) / À crédit / Pourboire
-  (green once a tip is on); « Montant » with the web's help lines; credit: search (≥ 2 characters, 5 results), « Changer »,
-  or new name + phone; « Addition » summary (remise, total and tip, paid, change or what stays to pay); the keypad on the
-  right (greyed when locked). Split: the chooser, part rows with Espèces / Carte (TPE), « Nouvelle part », × from 3 parts;
-  by article: part tabs, articles left with « +1 » / « Tout », the open part with its method, « − ». « Valider le
-  paiement » / « Mettre à crédit »; a refusal stays in the window as the caisse wrote it; a warning when the cash register
-  is enforced and no session is open. A partial payment keeps the window on the check (« Paiement enregistré. Reste à
-  payer : … »). Settled: « Ticket réglé. » with the change large, or « Mis à crédit. » with the customer; « Reçu imprimé /
-  non imprimé » with where or why; « Réimprimer » updates that line; « Terminer ». The idle lock is held while it is open.
-  At 125 % its body scrolls (keys 48 dp).
-- **Entries:** POS « Encaisser Ticket » — a new order is sent with `action: bill` then the window; on a table's check the
-  new lines go as a round, the check is billed (if running or a round was added), then the window; stock held back →
-  « Forcer l'envoi » bills (no print) then the window. After the window the POS is done with the order (fresh POS, or back
-  to the floor / Commandes with the message); closed before paying → « facturée : à encaisser depuis Commandes ».
-  Commandes: « Encaisser » (green) on `billed` / `payment_due`. Accueil « Encaisser » → Commandes on « À encaisser »
-  (`to_pay`, every day; the chip only with « Encaisser »); a time not today reads « 08/11 21:13 ».
-- **Discount in the cart:** totals breakdown « Remise (10 %) −5.900 » in green with ×, « −5.900 » on the folded total,
-  « Ajouter une remise » / « Modifier la remise » (with « Appliquer une remise », lines in the cart); window: Montant fixe /
-  Pourcentage, the value field takes the keyboard, Enter saves. A new order sends it with the order; a table's check opened
-  in the POS changes at once on the caisse (`/discount`), shown under « Commande #n (avant ce ticket) ».
-- Tests: 85 (+ `PaymentTest` 9: the cart's discount before taxes, cash keypad and change, TPE / credit locked and the
-  credit right, equal / custom / by-article splits, the tip, the calls and their bodies, the receipt printed here, a
-  refusal as the caisse wrote it; `RightsAndTilesTest.d5_brings_the_payment`).
-- Checked end to end (2026-11-10) on the packaged app with the local caisse (cash register session open, tip on, a
-  stand-in Ethernet printer) at 1366 × 768 and 1093 × 614: à emporter + 10 % → « Encaisser Ticket » → 60 in cash →
-  « Monnaie à rendre 6.900 DT », receipt with « Remise (10%) » and « Rendu 6.900 »; table 7 from the floor → « Encaisser
-  Ticket » → tip 10 % (125.400 DT) → by article: couscous in cash, the two Ojja by card → receipt with both payments, back
-  on the floor with the table's other check; Accueil « Encaisser » → « À encaisser » (3, from earlier days) → credit to a
-  customer found by name → paid later by card. Fixed by running it: « Encaisser Ticket » was cut by its icon, the discount
-  value field was squeezed, choice rows sat off the left edge, the reprint said its result twice; on the caisse the
-  ticket's « Remise (1%) » and the checks of earlier days (`to_pay`).
-
-## How D6 is built (2026-11-10)
-
-- **Data:** `data/remote/CashDtos.kt` (state, session, KPIs, movements, reports with their `ticket` and stock part, offline
-  warnings, expenses), `AltosApi` (`/cash-register…`, `/expenses`), `data/CashRegisterRepository` (open, movement, X, Z,
-  reports, reprint, stock request, expenses; X / Z / reprint carry `print_target` from Réglages), `data/PrintOutcomes`
-  (where a ticket went — shared with `OrdersRepository`), `Rights.showExpense`.
-- **`pos/CashCount.kt`:** `CashCount` (the Z's count by value: − / +, typed numbers, total, difference with the cash
-  expected, only the counted values sent), `parseAmount` (« 12,5 » or « 12.5 »), `CounterDate` (« 10/11/2026 » ⇄
-  « 2026-11-10 »).
-- **`ui/cash/CashRegisterModel` + `CashRegisterScreen`** (Accueil « Caisse », `Screen.CashRegister`): tabs Session /
-  Rapports X / Z / Dépenses (with the expense rights).
-  - Session: offline warnings (devices with pending actions, payments waiting for a session); no session → « Ouvrir la
-    caisse », or « La session … attend sa validation » with who closed it and where it is approved; open session → its code,
-    who opened it, « Espèces attendues » large, Fond / Ventes espèces / Entrées / Sorties / Dépôts au coffre /
-    Remboursements, « Entrée d'espèces », « Sortie d'espèces », « Dépôt au coffre » (Utiliser la caisse), « Rapport X »,
-    « Fermer la caisse (Z) »; the drawer's movements on the right (French labels, reason or order, who, ± amount).
-  - Windows: amount (and reason) → « Continuer » (or Enter) → the summary → « Confirmer »; « Retour » goes back to the
-    fields; the caisse's refusal stays in the window. Z: expected / counted / difference (green when equal, red otherwise),
-    one line per value with − / number / +, a note, offline warnings, then « Fermer la session ».
-  - After an X or a Z: « Rapport imprimé / non imprimé » with where or why, the Z's expected / counted / difference, its
-    stock part (lines: sold, left, to refill; the stock's message when not linked) with « Envoyer la demande au stock » /
-    « Plus tard », and the ticket as it prints (`ReceiptRenderer` 48 columns, fixed-width font); « Réimprimer ».
-  - Rapports X / Z: Tous / X / Z, this Caisse's reports (type, number, time, who, session, « à valider », total), the
-    chosen one's ticket and « Réimprimer ».
-  - Dépenses: Titre, Catégorie, Montant, Date (jj/mm/aaaa, today), Payée / En attente, Mode de paiement (« Payée en
-    espèces : sortie du tiroir de cette caisse. »), Description → « Enregistrer la dépense » (the category and method kept for
-    the next one); the day's list with its total and « sortie du tiroir ».
-  - The idle lock is held while a window is open.
-- **Fixed on the way:** an X / Z ticket printed « Ticket #RAPPORT X » (since D2: `ReceiptRenderer` put « Ticket # » before
-  any number); now only a plain order number gets it.
-- Tests: 90 (+ `CashRegisterTest` 5: count by value and difference, amounts and dates, the session calls and their bodies,
-  the Z's count sent and its ticket printed here without « Ticket # », the stock request, the expense form's fields;
-  `RightsAndTilesTest.d6_brings_the_cash_register`).
-- Checked end to end (2026-11-10) on the packaged app with the local caisse (count values 50 / 20 / 10 / 5 / 2 / 1 DT, a
-  stand-in Ethernet printer) at 1366 × 768: cash in 20 DT with its confirmation; X printed and shown; Z counted 5 × 50 +
-  20 + 10 = 280.000 against 280.100 (−0.100), printed « RAPPORT Z N°1 », the session waiting for its approval; approved on
-  the caisse → open with a 100 DT float → X; a 15 DT cash expense → expected 85 DT and a « Sortie d'espèces »; the past X / Z
-  with their tickets. Fixed by running it: two movement buttons cut by their icons, the report window too tall at 768 px,
-  Enter did not go to the next step, the ticket preview's last column cut. Not checked here: a Z with the stock on (covered
-  by the tests), a real Windows screen and printer.
-
-## Roadmap — step 4 (review approved 2026-11-08; ~17.5 days)
-
-| Step | Caisse | AltosPOS desktop | Effort | Status |
-|---|---|---|---|---|
-| D1 | Counter rights in `abilities` | Réglages (server, test, certificate, session, application), sign-in, Accueil by rights, Caisse picker, change user, idle lock, MSI "AltosPOS" | ~2 d | [x] built 2026-11-08, approved by the client |
-| D2 | Print jobs per printer; branch key endpoint; X / Z thermal ticket fix; currency format fix; « Complet / Résumé » | Style system (client's note on D1); ticket printing (USB or Ethernet), test print, « Sur cet appareil / Imprimante de la caisse », "Directe" agent, tray + start with Windows | ~4 d | [x] built 2026-11-08, client: "Great, proceed to D3" |
-| D3 | POS context, waiter right, charge taken off, cancel like the web, bill date | POS (sections in Tri order, search, web cart always visible, table picker + à emporter, send, add round, bill, waiting stock / force) and Commandes | ~3 d | [x] built 2026-11-08, client: "proceed with D4" |
-| D4 | Table and check operations; table details | Tables with every operation | ~3.5 d | [x] built 2026-11-08, client to test |
-| D5 | Discount endpoint; checks to pay of every day | Encaisser: cash + change, Carte (TPE), À crédit, split, tip, discount, receipt | ~2.5 d | [x] built 2026-11-10, client to test |
-| D6 | Cash register and expense endpoints | Caisse: open with float, cash in / out / safe drop, X, Z with count, stock panel + "Envoyer la demande au stock", dépenses | ~3.5 d | [x] built 2026-11-10, client to test |
-| D7 | CLAUDE.md | CLAUDE.md, release MSI, branches | ~0.5 d | [ ] |
-
-Later (own step): offline mode on `/api/sync/*` (`kind: "desktop"`), copying the handheld's offline code (Room KMP,
-sync, PIN checks; Windows DPAPI instead of the Android Keystore).
+- [x] D1–D6 built (2026-11-08 → 2026-11-10).
+- [ ] Client tests D4, D5, D6 on the counter PC.
+- [ ] **D7 wrap-up**: CLAUDE.md files, deployment branches.
+- [ ] **Offline mode** on `/api/sync/*` (`kind: "desktop"`), copying the handheld's offline code (local store, outbox,
+      sync, offline PIN sign-in, payment PIN; Windows DPAPI instead of the Android Keystore).
+- [ ] **MSI release — last**, after the offline mode (client, 2026-11-10).
 
 ## Open questions
 
-- None.
+- Caisse side (its `CLAUDE.md`): the web's Caisse page in English; millimes in the Z count.
 
-## Progress log
+## History (short)
 
-- 2026-11-08 — Review in the chat; client's answers: password as PIN; idle lock 5 min (not during a cart or payment);
-  printing like the Sunmi with USB **or** Ethernet; tray + start with Windows; branch key fetched by an admin; Tables
-  with every operation; X / Z « Complet / Résumé » + currency fix; server = IP + port; name AltosPOS; Réglages with
-  printer test and connection test. Plan updated to ~17.5 days, approved ("start D1").
-- 2026-11-08 — D1 built (see "How D1 is built"): 34 desktop tests, caisse suite 316 passed (8 skipped); run end to end
-  against a local caisse with screenshots. Next: the client builds (`gradlew run`, `packageMsi`) and tests D1 on the
-  counter PC; then D2.
-- 2026-11-08 — Client approved D1, with a note: the style must be right (buttons, texts, margins, paddings) — Réglages had
-  display issues. Measured at 1366 × 768 and the 125 % / 150 % sizes: no scrollbar, five control heights, 12 px help
-  text, blue selections, chips moving, misaligned rows, unclear saving. Client chose: Réglages one page, cleaned up,
-  inside D2. D2 built (see "How D2 is built"): style system on every screen, ticket printing, test print, « Directe »
-  agent, tray, start with Windows; caisse part in its `CLAUDE.md`. Found by running the packaged app: French dates
-  missing from the installer's runtime (`jdk.localedata` added), the PIN window too tall at 125 % (compact layout).
-  53 desktop tests; caisse suite 328 passed. Next: the client tests D2 on the counter PC (USB printer, tray, Windows
-  start); then D3 (POS + Commandes).
-- 2026-11-08 — Client: "Great, proceed to D3". Asked first (client's answers): table picker + à emporter; the cart copies
-  the web POS ("copy the same web UI and logic"); Commandes = today with status chips; the bill date fixed now; cancel
-  like the web everywhere. D3 built (see "How D3 is built"); caisse part in its `CLAUDE.md`. Found by running it: the
-  cart's lines had ~180 px at 1366 × 768 (header compacted, then folded into one line on short screens), the bottom
-  buttons were cut, the note window did not take the keyboard, the table picker was held to the platform's dialog width.
-  62 desktop tests; caisse suite 337 passed. Next: the client tests D3 on the counter PC; then D4 (Tables).
-- 2026-11-08 — Client: "check the POS uses images like the web and the handheld". It did not (text cards). Client: like
-  the web, photo on each article, the food icon for those without, square cards. Built (see "Item photos"), compared
-  with the web POS in a browser. Caisse fixes of the same day in its `CLAUDE.md`. 67 desktop tests.
-- 2026-11-08 — Client: the Couscous cards looked bigger in the 125 % screenshot. Cause: the grid stretched its columns to
-  fill the width (3 × ~195 dp at 125 % against 5 × 158 dp at 1366). Fixed: one card size (158 dp), the number of columns
-  follows the width, the row centred; checked at 1366 × 768 and 1093 × 614.
-- 2026-11-08 — Client: "still wrong" (the centred row left gaps on both sides). Now the cards fill the row from the search
-  box to the scrollbar, their number chosen so each is nearest 158 dp (4 at 125 %, 5 at 1366); the price pill no longer
-  loses « DT » on the narrower cards. Checked at 1366 × 768 and 1093 × 614. 67 desktop tests.
-- 2026-11-08 — Client: the 125 % screenshots were the responsive case, not a bug; the counter PC stays at 100 %; keep the
-  grid as it is. Asked whether a section with more than 7 articles works: rows of 5 at 1366 × 768, same size, the list
-  scrolls (shown with « Les incontournables », 13 dishes). Checked the client's idea that the order panel changes the
-  article area: at one window size it keeps one width (420 / 460 dp by window width only), cards identical to the pixel.
-- 2026-11-08 — D4 asked first (client's answers): floor like the web; occupied table → the POS on its check, like the web;
-  free table → nothing recorded until « Envoyer »; refresh every 15 s. Built (see "How D4 is built"); caisse part in its
-  `CLAUDE.md`. 75 desktop tests; caisse suite 351 passed. Next: the client tests D4 on the counter PC; then D5 (Encaisser).
-- 2026-11-10 — D4 reviewed; client: "fix the issues". Fixed in the three repos (desktop part above; caisse and stock in
-  their `CLAUDE.md`). Checked on the packaged app: a split ticket lists its lines in Commandes, floor tiles. 76 desktop
-  tests; caisse 357; stock 47.
-- 2026-11-10 — D5 asked first (client's answers: the web's window; the discount in the POS cart like the web; the receipt
-  printed by itself; « Encaisser » from the POS, Commandes, Accueil and the floor — "follow the web logic"). Built (see
-  "How D5 is built"); caisse part in its `CLAUDE.md`. 85 desktop tests; caisse suite 365 passed. Next: the client tests D5
-  on the counter PC; then D6 (Caisse: cash register, X / Z, expenses).
-- 2026-11-10 — D6 asked first (client: the web's Caisse page + past X / Z; Z counted by notes and coins; expenses with the
-  web's form + the day's list; « Confirmer » like the web). Built (see "How D6 is built"); caisse part in its `CLAUDE.md`
-  (with two questions: the web's Caisse page in English, millimes in the count). 90 desktop tests; caisse 370. Next: the
-  client tests D6 on the counter PC; then D7 (wrap-up, release MSI).
+- 2026-11-08 — review approved (~17.5 days); D1, D2, D3, D4 built.
+- 2026-11-10 — D4 reviewed and fixed; D5 and D6 built. Order changed by the client: offline mode, then the MSI last.

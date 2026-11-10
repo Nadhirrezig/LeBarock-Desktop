@@ -33,6 +33,17 @@ class TicketPrinter(
         }
     }
 
+    /**
+     * A kitchen ticket built on this PC while the caisse does not answer (offline step 2): on this PC's printer,
+     * whatever Réglages says about bills (« Imprimante de la caisse » cannot print while the caisse is down).
+     */
+    suspend fun printKitchen(ticket: KitchenTicketPrint): Result<String> {
+        val cfg = config
+        return send(cfg, "cuisine hors ligne") {
+            EscPosEncoder(cfg.charset).encode(ReceiptRenderer(ReceiptRenderer.columnsFor(cfg.paperMm)).renderKitchen(ticket))
+        }
+    }
+
     /** Réglages → "Imprimer un test", with what is being tested on the paper. */
     suspend fun printTest(restaurant: String, cfg: PrinterConfig = config): Result<String> = send(cfg, "test") {
         val now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))

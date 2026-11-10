@@ -117,6 +117,33 @@ data class OrderRefEntity(
 )
 
 /**
+ * An order as this PC took it offline (step 2): a new check (its temporary number « D1-007 »), or the rounds added
+ * offline to a check from the copy ([baseOrderId]). Its lines (JSON of `LocalLine`) each name the outbox action that
+ * sends them; once the caisse has them the copy shows them and the local lines are hidden. The screens use its
+ * negative id (−([localId] + 1)).
+ */
+data class LocalOrderEntity(
+    val localId: Long = 0,
+    /** The order_ref sent to the caisse: a new uuid, or a copy check's id. */
+    val ref: String,
+    val baseOrderId: Long?,
+    val offlineNumber: String?,
+    val tableId: Long?,
+    val tableCode: String?,
+    val pax: Int,
+    val orderType: String,
+    /** kot | billed | paid (step 3) */
+    val status: String,
+    val linesJson: String,
+    val createdAt: Long,
+    /** The real check at the caisse, once synced. */
+    val syncedOrderId: Long? = null,
+    val syncedNumber: String? = null,
+    /** Payments taken offline on it (step 3): JSON of `LocalPayment`. */
+    val paymentsJson: String? = null,
+)
+
+/**
  * The Caisse's « Hors ligne » account and the offline PIN checks of the last copy, sealed for this Windows account.
  * The copy itself is stored without them. The sign-in with the PIN comes with step 3.
  */
@@ -465,6 +492,53 @@ class OfflineStore private constructor(private val connection: Connection, val p
             OrderRefEntity(rs.getString("ref"), rs.getString("offline_number"), rs.longOrNull("order_id"), rs.getString("order_number"), rs.getLong("updated_at"))
         }
     }
+
+    // ---------------------------------------------------------------- orders taken offline (step 2)
+
+    private fun localRow(rs: ResultSet) = LocalOrderEntity(
+        localId = rs.getLong("local_id"),
+        ref = rs.getString("ref"),
+        baseOrderId = rs.longOrNull("base_order_id"),
+        offlineNumber = rs.getString("offline_number"),
+        tableId = rs.longOrNull("table_id"),
+        tableCode = rs.getString("table_code"),
+        pax = rs.getInt("pax"),
+        orderType = rs.getString("order_type"),
+        status = rs.getString("status"),
+        linesJson = rs.getString("lines_json"),
+        createdAt = rs.getLong("created_at"),
+        syncedOrderId = rs.longOrNull("synced_order_id"),
+        syncedNumber = rs.getString("synced_number"),
+        paymentsJson = rs.getString("payments_json"),
+    )
+
+    /** A new order: its local id (the screens' negative id comes from it). */
+    suspend fun insertLocalOrder(o: LocalOrderEntity): Long = write {
+        run(
+            "INSERT INTO local_orders (ref, base_order_id, offline_number, table_id, table_code, pax, order_type, status, lines_json, " +
+                "created_at, synced_order_id, synced_number, payments_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            o.ref, o.baseOrderId, o.offlineNumber, o.tableId, o.tableCode, o.pax, o.orderType, o.status, o.linesJson,
+            o.createdAt, o.syncedOrderId, o.syncedNumber, o.paymentsJson,
+        )
+        one("SELECT last_insert_rowid()") { it.getLong(1) } ?: error("Commande hors ligne non enregistrée.")
+    }
+
+    suspend fun saveLocalOrder(o: LocalOrderEntity) = write {
+        run(
+            "UPDATE local_orders SET ref = ?, base_order_id = ?, offline_number = ?, table_id = ?, table_code = ?, pax = ?, order_type = ?, " +
+                "status = ?, lines_json = ?, created_at = ?, synced_order_id = ?, synced_number = ?, payments_json = ? WHERE local_id = ?",
+            o.ref, o.baseOrderId, o.offlineNumber, o.tableId, o.tableCode, o.pax, o.orderType, o.status, o.linesJson,
+            o.createdAt, o.syncedOrderId, o.syncedNumber, o.paymentsJson, o.localId,
+        )
+    }
+
+    suspend fun localOrder(localId: Long): LocalOrderEntity? = read { one("SELECT * FROM local_orders WHERE local_id = ?", localId, row = ::localRow) }
+
+    suspend fun localOrderByRef(ref: String): LocalOrderEntity? = read { one("SELECT * FROM local_orders WHERE ref = ?", ref, row = ::localRow) }
+
+    suspend fun localOrders(): List<LocalOrderEntity> = read { list("SELECT * FROM local_orders ORDER BY local_id", row = ::localRow) }
+
+    suspend fun deleteLocalOrder(localId: Long) = write { run("DELETE FROM local_orders WHERE local_id = ?", localId) }
 
     /** Orders taken offline (step 2) the caisse has had for a day: forgotten here, unless an action of theirs still waits. */
     suspend fun pruneLocalOrders(before: Long) = write {

@@ -26,6 +26,9 @@ sealed interface Screen {
 
     /** D6: the account's Caisse (session, X / Z, reports, expenses). */
     data object CashRegister : Screen
+
+    /** Offline step 2: « À vérifier », what the caisse refused or set aside from this PC's offline actions. */
+    data object Review : Screen
 }
 
 /** A small back stack: the counter has few screens, all inside one window. */

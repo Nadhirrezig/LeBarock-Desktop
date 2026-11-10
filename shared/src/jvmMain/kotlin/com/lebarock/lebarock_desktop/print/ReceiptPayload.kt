@@ -7,7 +7,33 @@ import kotlinx.serialization.Serializable
  * the X / Z: same shape), copied from the handheld app. The caisse owns the content (French labels,
  * the currency as set in its settings, which sections appear); this app owns the paper layout.
  * The handheld's NFC credit is gone; `remainingDue` (a partly paid check) is printed here.
+ * (The kitchen ticket below is built here, offline; the payload follows it.)
  */
+
+/**
+ * A kitchen ticket built on this PC while the caisse does not answer (offline step 2), one per station, printed on
+ * the counter's printer — the handheld's KitchenTicketPrint.
+ */
+data class KitchenTicketPrint(
+    val station: String,
+    /** « Table T5 », « À emporter » or « #D1-007 ». */
+    val left: String,
+    /** « Ticket D1-007 ». */
+    val right: String,
+    val items: List<KitchenTicketLine>,
+    /** « Quantité totale : 3 ». */
+    val totalQuantity: String,
+    val note: String?,
+    val dateTime: String,
+)
+
+data class KitchenTicketLine(
+    val name: String,
+    val quantity: Int,
+    /** Variation, options, note. */
+    val details: List<String>,
+)
+
 @Serializable
 data class ReceiptPayload(
     val restaurant: ReceiptRestaurant = ReceiptRestaurant(),

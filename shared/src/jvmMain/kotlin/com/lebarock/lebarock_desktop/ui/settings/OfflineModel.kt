@@ -35,6 +35,8 @@ class OfflineModel(private val offline: OfflineSync, private val sessions: Sessi
         private set
     var confirmClear by mutableStateOf(false)
         private set
+    var reviewCount by mutableStateOf(offline.reviewCount.value)
+        private set
 
     val storeOnDisk: Boolean get() = offline.storeOnDisk
 
@@ -43,6 +45,7 @@ class OfflineModel(private val offline: OfflineSync, private val sessions: Sessi
         scope.launch { offline.deviceCode.collect { code = it } }
         scope.launch { offline.lastContactAt.collect { lastContact = it } }
         scope.launch { offline.snapshot.collect { copy = it } }
+        scope.launch { offline.reviewCount.collect { reviewCount = it } }
     }
 
     val deviceLine: String get() = code?.let { "Caisse PC $it" } ?: "pas encore enregistré (connectez-vous une fois)"

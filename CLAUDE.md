@@ -19,7 +19,7 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   kotlinx.serialization, material-icons-extended, JNA (Windows DPAPI and registry), sqlite-jdbc (the offline store; the
   installed app needs the `java.sql` module, set in `desktopApp/build.gradle.kts`).
 - Modules: `shared` (all app code `src/jvmMain`, tests `src/jvmTest`), `desktopApp` (window, tray, installer settings).
-- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**102 tests**, 2026-11-10).
+- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**110 tests**, 2026-11-10).
 - Installer: `gradlew :desktopApp:packageMsi` **on Windows** → `desktopApp/build/compose/binaries/main/msi/AltosPOS-x.y.z.msi`.
   Raise `altospos.version` for each release (MAJOR.MINOR.BUILD); `upgradeUuid` never changes.
 - Data folder `%APPDATA%\AltosPOS` (`settings.json`, `offline.db`, `logs\`, `certs\`, `cache\images`, lock file);
@@ -62,12 +62,16 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   form + the day's list; every money action asks « Confirmer »; the Z's approval stays on the web.
 - **Offline mode (client, 2026-11-10):** the handheld's offline mode on this PC, on the caisse's `/api/sync/*`
   (`kind: "desktop"`, the caisse names the PC « D1 » and lists it « Caisse PC D1 »). **Scope = the handheld's actions
-  only** (new order, round, bill, remove a line, cash / card payment, split); discount, credit, table operations, cancel,
-  the cash register and expenses wait for the caisse (may come later as feature updates). **Kitchen tickets offline print
-  on the printer linked to the POS** (the counter's). **Sign-in offline = the Caisse's « Hors ligne » account and its
-  PIN**, payment behind the payment PIN (both already on the caisse). **The copy is as fresh as the last moment an
+  only** (new order, round, bill, reprint; step 3: cash / card payment, split); discount, credit, waiter, charges, table
+  operations, cancel, taking a line off, the cash register and expenses wait for the caisse (may come later as feature
+  updates); **a click on those says « Hors ligne : … n'est pas possible tant que la caisse ne répond pas. »** (nothing
+  greyed out). **Everything offline is recorded as the Caisse's « Hors ligne » account** (needs its offline PIN set at the
+  caisse; as on the handheld). **Kitchen tickets (always, one per station) and the bill print offline on this PC's
+  printer** (Réglages), even when Réglages says « Imprimante de la caisse ». **Sign-in offline = the Caisse's « Hors
+  ligne » account and its PIN** (step 3), payment behind the payment PIN. **The copy is as fresh as the last moment an
   account was signed in** (the caisse gives it to a signed-in account only; no caisse change — rejected for now: the
-  copy given to the device key while the PC is locked).
+  copy given to the device key while the PC is locked). The caisse's `order.remove_line` only covers lines waiting for
+  stock: not used (as on the handheld).
 - **Not included:** cash drawer, customer display, barcode, kitchen screen, waiter notifications, QR approvals.
 
 ## How the app is organised
@@ -80,7 +84,13 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   review items, order refs, local orders, offline access — the handheld's Room schema and call names; WAL, a damaged file
   is set aside as `.bad`), `ConnectionMonitor` (offline after 10 s of failed calls; « Tester la connexion » is not
   watched), `OfflineSync` (heartbeat 30 s, snapshot static + checks, outbox sent in order, « À vérifier » items, device
-  key and PIN checks sealed with `SecretBox`). `ui/offline/OfflineBanner`, `ui/settings/OfflineSection` + `OfflineModel`.
+  key and PIN checks sealed with `SecretBox`), `OfflineCatalog` (the copy read for the screens, the bill, the kitchen),
+  `OfflineOrders` (reads, new order « D1-007 », round, bill, reprint; printing on `TicketPrinter`). `OrdersRepository`
+  answers from `OfflineOrders` while `OfflineSync.mustQueue()` (offline, or the outbox not empty), refuses the rest
+  (`waits(…)`), and opens an order taken offline as its real check once synced (`real(id)`). The last online POS context
+  is kept (`pos_context` part: order types). Photos come from the disk cache offline. `ui/offline/OfflineBanner`,
+  `ReviewScreen` (+ Accueil card, Réglages button), `ui/settings/OfflineSection` + `OfflineModel`; the kitchen layout is
+  `ReceiptRenderer.renderKitchen`.
 - `pos/`: plain, tested logic — `Cart` + `CartMath` (the web's `calculateTotal`, discount), `Payment` (`PaymentForm`:
   methods, keypad, credit, equal / custom / by-article splits; `TipForm`), `CashCount` (Z count by value, amounts, dates).
 - `print/`: `ReceiptRenderer` (48 / 32 columns; a plain number reads « Ticket #42 », an X / Z keeps its title),
@@ -107,6 +117,12 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   « Hors ligne » banner above every screen (sign-in included), Réglages → « Mode hors ligne » (code, copy, waiting,
   last contact, state, « Synchroniser maintenant », « Effacer les données hors ligne »). No caisse change. After O1 the
   app says « Hors ligne » but still cannot take orders. Tests: `OfflineFoundationTest`.
+- **O2 orders offline** (2026-11-10): POS (sections, photos from the cache, number « D1-001 »), the floor and Commandes
+  from the copy with the orders taken offline on top; send, round, bill, reprint; kitchen tickets (« HORS LIGNE ») and
+  the bill on this PC's printer; the rest refused in French; « À vérifier » screen. Run end to end: offline order on T2,
+  a round, the bill printed; the caisse back → check #1 (D1-001, billed, same total) recorded as « Hors ligne ». Found:
+  the compact cart header's window cut the covers stepper with « #D1-001 » (widened to 540). Tests: `OfflineOrdersTest`.
+  Until O3, a session closed while offline cannot sign in again (the PIN sign-in is O3).
 
 Each was run end to end on the packaged app at 1366 × 768 (and 1093 × 614). Not checked here: a real Windows screen,
 USB printing through a Windows driver, tray and registry — the client's test.
@@ -118,9 +134,8 @@ USB printing through a Windows driver, tray and registry — the client's test.
 - [ ] **D7 wrap-up**: CLAUDE.md files, deployment branches.
 - [x] **Offline O1** foundation (2026-11-10) — client to test: PC code in Réglages, copy downloaded, banner when the
       caisse is stopped.
-- [ ] **Offline O2**: orders offline — POS and tables from the copy (`OfflineCatalog`, `OfflineOrders` copied from the
-      handheld), new order with its temporary number « D1-007 », rounds, bill, kitchen tickets and bill on the counter's
-      printer, « À vérifier » screen.
+- [x] **Offline O2** orders offline (2026-11-10) — client to test: sign in, stop the caisse, take an order on a table,
+      a round, « Imprimer Ticket »; start the caisse: the check appears with its D1 number.
 - [ ] **Offline O3**: sign-in with the « Hors ligne » PIN (`OfflinePins`), cash / card payment behind the payment PIN,
       the offline session ends once the caisse answers and the outbox is empty; then an end-to-end run with the caisse.
 - [ ] **MSI release — last**, after the offline mode (client, 2026-11-10).
@@ -134,4 +149,4 @@ USB printing through a Windows driver, tray and registry — the client's test.
 - 2026-11-08 — review approved (~17.5 days); D1, D2, D3, D4 built.
 - 2026-11-10 — D4 reviewed and fixed; D5 and D6 built. Order changed by the client: offline mode, then the MSI last.
   Z count: « Reste (pièces) » amount added; movement names follow the web. Offline mode: scope and steps agreed, O1
-  (foundation) built and run against the caisse.
+  (foundation) and O2 (orders offline) built and run against the caisse.

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.ReportProblem
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,7 +22,7 @@ import com.lebarock.lebarock_desktop.ui.theme.Dimens
 
 /** Réglages → « Mode hors ligne ». */
 @Composable
-fun OfflineSection(model: OfflineModel) {
+fun OfflineSection(model: OfflineModel, onOpenReview: () -> Unit = {}) {
     SectionCard(
         "Mode hors ligne",
         Icons.Outlined.CloudSync,
@@ -45,8 +46,9 @@ fun OfflineSection(model: OfflineModel) {
         model.message?.let { Banner(Tone.INFO, it) }
         Row(horizontalArrangement = Arrangement.spacedBy(Dimens.sm)) {
             AppButton("Synchroniser maintenant", model::syncNow, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Sync, loading = model.busy)
-            AppButton("Effacer les données hors ligne", model::askClear, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.DeleteOutline, enabled = !model.busy)
+            AppButton(if (model.reviewCount > 0) "À vérifier (${model.reviewCount})" else "À vérifier", onOpenReview, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.ReportProblem)
         }
+        AppButton("Effacer les données hors ligne", model::askClear, kind = ButtonKind.TEXT, icon = Icons.Outlined.DeleteOutline, enabled = !model.busy)
     }
 
     if (model.confirmClear) {

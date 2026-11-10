@@ -58,33 +58,52 @@ class OrdersRepository(
     private val settings: SettingsStore,
     private val printer: TicketPrinter,
     private val json: Json,
+    /**
+     * Offline mode (step 2): while the caisse does not answer, or while actions still wait to be sent, the calls are
+     * answered from this PC's copy (the handheld's AltosRepository); null = no offline mode (tests).
+     */
+    private val offline: com.lebarock.lebarock_desktop.data.offline.OfflineOrders? = null,
+    private val sync: com.lebarock.lebarock_desktop.data.offline.OfflineSync? = null,
 ) {
     private val target: PrintTarget get() = settings.current.printer.target
     private val outcomes = PrintOutcomes(printer, json)
+
+    /** The offline orders, when the screens work from the copy now. */
+    private suspend fun offlineNow(): com.lebarock.lebarock_desktop.data.offline.OfflineOrders? = offline?.takeIf { it.active() }
+
+    /** Online again: an order taken offline (negative id) is opened as its real check at the caisse. */
+    private suspend fun real(id: Long): Long = if (id < 0) offline?.syncedIdOf(id) ?: id else id
+
+    /** What waits for the caisse offline (client, 2026-11-10): a click says so in French. */
+    private suspend fun <T> waits(what: String, online: suspend () -> Result<T>): Result<T> =
+        offlineNow()?.unavailable(what) ?: online()
 
     val currency: CurrencyInfo get() = settings.current.currency
 
     // ---- Catalogue and tables ----
 
-    suspend fun menus(): Result<List<MenuDto>> = caisse.call { caisse.api().menus().data.orEmpty() }
+    suspend fun menus(): Result<List<MenuDto>> = offlineNow()?.menus() ?: caisse.call { caisse.api().menus().data.orEmpty() }
 
-    suspend fun menuItems(menuId: Long?): Result<List<MenuItemDto>> = caisse.call { caisse.api().menuItems(menuId).data.orEmpty() }
+    suspend fun menuItems(menuId: Long?): Result<List<MenuItemDto>> =
+        offlineNow()?.menuItems(menuId) ?: caisse.call { caisse.api().menuItems(menuId).data.orEmpty() }
 
-    suspend fun tables(): Result<List<AreaDto>> = caisse.call { caisse.api().tables().data.orEmpty() }
+    suspend fun tables(): Result<List<AreaDto>> = offlineNow()?.tables() ?: caisse.call { caisse.api().tables().data.orEmpty() }
 
     /**
      * The cart's make-up (order types, next number, taxes, charges, waiters). The currency comes with
      * it, read fresh: a change made in the caisse's settings shows at once, not at the next test.
      */
-    suspend fun posContext(): Result<PosContextDto> = caisse.call {
+    suspend fun posContext(): Result<PosContextDto> = offlineNow()?.posContext() ?: caisse.call {
         caisse.api().posContext().data ?: throw unexpected()
     }.onSuccess { context ->
         context.currency?.let(CurrencyInfo::of)?.let { fresh ->
             if (fresh != settings.current.currency) settings.update { it.copy(currency = fresh) }
         }
+        // Kept for the offline cart (its order types): the caisse gives them to a signed-in account only.
+        runCatching { sync?.rememberPosContext(json.encodeToJsonElement(PosContextDto.serializer(), context) as kotlinx.serialization.json.JsonObject) }
     }
 
-    suspend fun cancelReasons(): Result<List<CancelReasonDto>> = caisse.call { caisse.api().cancelReasons().data.orEmpty() }
+    suspend fun cancelReasons(): Result<List<CancelReasonDto>> = waits("annuler une commande") { caisse.call { caisse.api().cancelReasons().data.orEmpty() } }
 
     // ---- Commandes ----
 
@@ -93,45 +112,48 @@ class OrdersRepository(
      * (billed or on credit) whatever their day (D5, « À encaisser »).
      */
     suspend fun orders(status: String? = null, toPay: Boolean = false): Result<OrdersResponse> =
-        caisse.call { caisse.api().orders(status = status, toPay = if (toPay) 1 else null) }
+        offlineNow()?.orders(status, toPay) ?: caisse.call { caisse.api().orders(status = status, toPay = if (toPay) 1 else null) }
 
-    suspend fun orderDetail(id: Long): Result<OrderDetailDto> = caisse.call { caisse.api().orderDetail(id).data ?: throw unexpected() }
+    suspend fun orderDetail(id: Long): Result<OrderDetailDto> =
+        offlineNow()?.orderDetail(id) ?: caisse.call { caisse.api().orderDetail(real(id)).data ?: throw unexpected() }
 
     // ---- The order's lifecycle ----
 
     /** A new order: kot (Envoyer) | bill (Encaisser Ticket) | bill_print (Imprimer Ticket). */
-    suspend fun sendOrder(request: SendOrderRequest): Result<Printed<OrderActionDto>> = caisse.call {
+    suspend fun sendOrder(request: SendOrderRequest): Result<Printed<OrderActionDto>> = offlineNow()?.sendOrder(request) ?: caisse.call {
         val body = if (request.action == "bill_print") request.copy(printTarget = target.apiValue) else request
         val envelope = caisse.api().sendOrder(body)
         Printed(envelope.data ?: throw unexpected(), if (request.action == "bill_print") outcome(envelope) else null)
     }
 
-    /** « Nouveau ticket »: a round on an open check. */
-    suspend fun addItems(orderId: Long, request: AddItemsRequest): Result<OrderActionDto> = caisse.call {
-        caisse.api().addItems(orderId, request).data ?: throw unexpected()
+    /** « Nouveau ticket »: a round on an open check. Offline, [Printed.print] says what the kitchen tickets did. */
+    suspend fun addItems(orderId: Long, request: AddItemsRequest): Result<Printed<OrderActionDto>> = offlineNow()?.addItems(orderId, request) ?: caisse.call {
+        Printed(caisse.api().addItems(real(orderId), request).data ?: throw unexpected(), null)
     }
 
     /** The bill is made whatever the printer does: a ticket that did not come out is in [Printed.print]. */
-    suspend fun bill(orderId: Long, print: Boolean, force: Boolean = false): Result<Printed<OrderActionDto>> = caisse.call {
-        val envelope = caisse.api().billOrder(orderId, BillRequest(print = print, force = force, printTarget = if (print) target.apiValue else null))
+    suspend fun bill(orderId: Long, print: Boolean, force: Boolean = false): Result<Printed<OrderActionDto>> = offlineNow()?.billOrder(orderId, print) ?: caisse.call {
+        val envelope = caisse.api().billOrder(real(orderId), BillRequest(print = print, force = force, printTarget = if (print) target.apiValue else null))
         Printed(envelope.data ?: throw unexpected(), if (print) outcome(envelope) else null)
     }
 
     /** C5: send again the lines waiting for stock; [force] = « Forcer l'envoi ». */
-    suspend fun sendWaiting(orderId: Long, force: Boolean): Result<OrderActionDto> = caisse.call {
-        caisse.api().sendWaiting(orderId, SendWaitingRequest(force)).data ?: throw unexpected()
+    suspend fun sendWaiting(orderId: Long, force: Boolean): Result<OrderActionDto> = waits("renvoyer des articles en attente de stock") {
+        caisse.call { caisse.api().sendWaiting(real(orderId), SendWaitingRequest(force)).data ?: throw unexpected() }
     }
 
     /**
      * Takes a line off the check (one waiting for stock, or a sent drink with « Annuler une commande »). The last
      * line gone closes the check: kept « Annulée » when something of it was sent, deleted otherwise.
      */
-    suspend fun removeItem(orderId: Long, itemId: Long): Result<LineRemoval> = caisse.call {
-        val answer = caisse.api().removeOrderItem(orderId, itemId)
-        when {
-            answer.data != null -> LineRemoval.KEPT
-            answer.cancelled == true -> LineRemoval.CANCELLED
-            else -> LineRemoval.DELETED
+    suspend fun removeItem(orderId: Long, itemId: Long): Result<LineRemoval> = waits("retirer un article") {
+        caisse.call {
+            val answer = caisse.api().removeOrderItem(real(orderId), itemId)
+            when {
+                answer.data != null -> LineRemoval.KEPT
+                answer.cancelled == true -> LineRemoval.CANCELLED
+                else -> LineRemoval.DELETED
+            }
         }
     }
 
@@ -139,81 +161,95 @@ class OrdersRepository(
      * « Imprimer »: the bill again. Returns where it printed; fails with the reason (the caisse's
      * printer refused, or this PC's printer did).
      */
-    suspend fun reprint(orderId: Long): Result<String> = caisse.call {
-        val envelope = caisse.api().printOrder(orderId, PrintRequest(target.apiValue))
+    suspend fun reprint(orderId: Long): Result<String> = offlineNow()?.printOrder(orderId) ?: caisse.call {
+        val envelope = caisse.api().printOrder(real(orderId), PrintRequest(target.apiValue))
         val result = outcome(envelope) ?: PrintOutcome(true, "Ticket envoyé à l'imprimante de la caisse.")
         if (!result.ok) throw ApiFailure(result.message, FailureKind.OTHER, code = "print_failed")
         result.message
     }
 
     /** « Annuler la commande »: kept as « Annulée » with its reason; money taken goes back first. */
-    suspend fun cancel(orderId: Long, reasonId: Long?, reason: String?): Result<Unit> = caisse.call {
-        caisse.api().cancelOrder(orderId, CancelRequest(reasonId, reason?.trim()?.ifEmpty { null }))
-        Unit
+    suspend fun cancel(orderId: Long, reasonId: Long?, reason: String?): Result<Unit> = waits("annuler une commande") {
+        caisse.call {
+            caisse.api().cancelOrder(real(orderId), CancelRequest(reasonId, reason?.trim()?.ifEmpty { null }))
+            Unit
+        }
     }
 
     /** « Servi » on a round the kitchen has ready. */
-    suspend fun served(kotId: Long): Result<Unit> = caisse.call { caisse.api().markServed(kotId); Unit }
+    suspend fun served(kotId: Long): Result<Unit> = waits("marquer un ticket servi") { caisse.call { caisse.api().markServed(kotId); Unit } }
 
     // ---- D4: a table and its check, as on the web ----
 
     /** « Changer de table »: the check moves to a free table (an occupied one is « Fusionner »). */
-    suspend fun moveOrder(orderId: Long, tableId: Long): Result<CheckChange> = change { caisse.api().moveOrder(orderId, TableIdRequest(tableId)) }
+    suspend fun moveOrder(orderId: Long, tableId: Long): Result<CheckChange> =
+        waits("changer de table") { change { caisse.api().moveOrder(real(orderId), TableIdRequest(tableId)) } }
 
     /** « Fusionner »: this table's party joins [tableId]'s check; the answer is that check. */
-    suspend fun mergeOrder(orderId: Long, tableId: Long): Result<CheckChange> = change { caisse.api().mergeOrder(orderId, TableIdRequest(tableId)) }
+    suspend fun mergeOrder(orderId: Long, tableId: Long): Result<CheckChange> =
+        waits("fusionner des tables") { change { caisse.api().mergeOrder(real(orderId), TableIdRequest(tableId)) } }
 
     /** « Séparer »: [quantities] (line id → how many) move to a new check on the same table. */
-    suspend fun splitOrder(orderId: Long, quantities: Map<Long, Int>): Result<CheckChange> = caisse.call {
-        val answer = caisse.api().splitOrder(orderId, SplitRequest(quantities.map { (id, qty) -> SplitLine(id, qty) }))
-        CheckChange(answer.data ?: throw unexpected(), answer.message ?: "Commande séparée.", answer.newOrder)
+    suspend fun splitOrder(orderId: Long, quantities: Map<Long, Int>): Result<CheckChange> = waits("séparer une commande") {
+        caisse.call {
+            val answer = caisse.api().splitOrder(real(orderId), SplitRequest(quantities.map { (id, qty) -> SplitLine(id, qty) }))
+            CheckChange(answer.data ?: throw unexpected(), answer.message ?: "Commande séparée.", answer.newOrder)
+        }
     }
 
-    suspend fun setWaiter(orderId: Long, waiterId: Long): Result<CheckChange> = change { caisse.api().setWaiter(orderId, WaiterRequest(waiterId)) }
+    suspend fun setWaiter(orderId: Long, waiterId: Long): Result<CheckChange> =
+        waits("changer de serveur") { change { caisse.api().setWaiter(real(orderId), WaiterRequest(waiterId)) } }
 
     /** The restaurant's customers matching a name, phone or e-mail (2 characters at least). */
-    suspend fun customers(search: String): Result<List<CustomerDto>> = caisse.call { caisse.api().customers(search.trim()).data.orEmpty() }
+    suspend fun customers(search: String): Result<List<CustomerDto>> =
+        waits("chercher un client") { caisse.call { caisse.api().customers(search.trim()).data.orEmpty() } }
 
-    suspend fun setCustomer(orderId: Long, request: CustomerRequest): Result<CheckChange> = change { caisse.api().setCustomer(orderId, request) }
+    suspend fun setCustomer(orderId: Long, request: CustomerRequest): Result<CheckChange> =
+        waits("choisir un client") { change { caisse.api().setCustomer(real(orderId), request) } }
 
-    suspend fun removeCharge(orderId: Long, chargeId: Long): Result<CheckChange> = change { caisse.api().removeCharge(orderId, chargeId) }
+    suspend fun removeCharge(orderId: Long, chargeId: Long): Result<CheckChange> =
+        waits("retirer un frais") { change { caisse.api().removeCharge(real(orderId), chargeId) } }
 
     /** Corrects a payment recorded with the wrong method, « cash » ⇄ « card »; the drawer follows. */
     suspend fun changePaymentMethod(orderId: Long, paymentId: Long, method: String): Result<CheckChange> =
-        change { caisse.api().changePaymentMethod(orderId, paymentId, PaymentMethodRequest(method)) }
+        waits("corriger un paiement") { change { caisse.api().changePaymentMethod(real(orderId), paymentId, PaymentMethodRequest(method)) } }
 
-    suspend fun markReviewed(orderId: Long): Result<CheckChange> = change { caisse.api().markReviewed(orderId) }
+    suspend fun markReviewed(orderId: Long): Result<CheckChange> = waits("marquer une commande vérifiée") { change { caisse.api().markReviewed(real(orderId)) } }
 
     /** « Libérer »: a table opened (web, handheld) where nobody ordered is free again. */
-    suspend fun releaseTable(tableId: Long): Result<String> = caisse.call {
-        caisse.api().releaseTable(tableId).message ?: "Table libérée."
+    suspend fun releaseTable(tableId: Long): Result<String> = waits("libérer une table") {
+        caisse.call { caisse.api().releaseTable(tableId).message ?: "Table libérée." }
     }
 
     // ---- D5: Encaisser, as the web's payment window ----
 
     /** What the payment window needs: the due, the paid amount, the methods this account may use, the split's lines. */
-    suspend fun paymentContext(orderId: Long): Result<PaymentContextDto> = caisse.call {
-        caisse.api().paymentContext(orderId).data ?: throw unexpected()
+    suspend fun paymentContext(orderId: Long): Result<PaymentContextDto> = waits("l'encaissement") {
+        caisse.call { caisse.api().paymentContext(real(orderId)).data ?: throw unexpected() }
     }
 
     /**
      * Records a payment (cash, card, credit, or a split in one go). The receipt prints by itself once the check is
      * settled (client, 2026-11-10), where Réglages says: its outcome is in [Printed.print] (null while it stays open).
      */
-    suspend fun pay(orderId: Long, request: PaymentRequest): Result<Printed<PaymentResultDto>> = caisse.call {
-        val envelope = caisse.api().pay(orderId, request.copy(printTarget = target.apiValue))
-        Printed(envelope.data ?: throw unexpected(), outcome(envelope))
+    suspend fun pay(orderId: Long, request: PaymentRequest): Result<Printed<PaymentResultDto>> = waits("l'encaissement") {
+        caisse.call {
+            val envelope = caisse.api().pay(real(orderId), request.copy(printTarget = target.apiValue))
+            Printed(envelope.data ?: throw unexpected(), outcome(envelope))
+        }
     }
 
     /** « Pourboire »: sets (or, at 0, takes off) the check's tip; the total follows. */
-    suspend fun tip(orderId: Long, amount: Double, note: String?): Result<Unit> = caisse.call {
-        caisse.api().tip(orderId, TipRequest(amount, note?.trim()?.ifEmpty { null }))
-        Unit
+    suspend fun tip(orderId: Long, amount: Double, note: String?): Result<Unit> = waits("ajouter un pourboire") {
+        caisse.call {
+            caisse.api().tip(real(orderId), TipRequest(amount, note?.trim()?.ifEmpty { null }))
+            Unit
+        }
     }
 
     /** « Remise » on an open check (fixed | percent); [type] null takes it off. */
     suspend fun setDiscount(orderId: Long, type: String?, value: Double?): Result<CheckChange> =
-        change { caisse.api().setDiscount(orderId, DiscountRequest(type, value)) }
+        waits("la remise") { change { caisse.api().setDiscount(real(orderId), DiscountRequest(type, value)) } }
 
     private suspend fun change(block: suspend () -> Envelope<OrderDetailDto>): Result<CheckChange> = caisse.call {
         val envelope = block()

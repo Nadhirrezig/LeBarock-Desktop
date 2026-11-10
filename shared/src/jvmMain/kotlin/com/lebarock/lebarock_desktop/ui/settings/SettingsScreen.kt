@@ -64,7 +64,7 @@ import java.time.format.DateTimeFormatter
  * button; every other section saves on each change and says so.
  */
 @Composable
-fun SettingsScreen(model: SettingsModel, printing: PrintingModel?, canGoBack: Boolean, onBack: () -> Unit, offline: OfflineModel? = null) {
+fun SettingsScreen(model: SettingsModel, printing: PrintingModel?, canGoBack: Boolean, onBack: () -> Unit, offline: OfflineModel? = null, onOpenReview: () -> Unit = {}) {
     Column(
         Modifier.fillMaxSize().onPreviewKeyEvent {
             if (it.type == KeyEventType.KeyDown && it.key == Key.Escape && canGoBack) {
@@ -94,7 +94,7 @@ fun SettingsScreen(model: SettingsModel, printing: PrintingModel?, canGoBack: Bo
                 PrintingSection(printing)
                 DirectPrintingSection(printing)
             }
-            if (offline != null) OfflineSection(offline)
+            if (offline != null) OfflineSection(offline, onOpenReview)
             if (!model.firstRun) SessionSection(model)
             ApplicationSection(model)
         }

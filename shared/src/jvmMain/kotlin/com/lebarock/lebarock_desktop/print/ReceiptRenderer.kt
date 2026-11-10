@@ -88,6 +88,44 @@ class ReceiptRenderer(private val width: Int = 48) {
         return ops
     }
 
+    /**
+     * A kitchen ticket printed on this PC while the caisse does not answer (offline step 2), the handheld's layout (a
+     * port of the caisse's compact ticket, PrinterSetting::printCompactKot): the station big at the top, « HORS LIGNE »,
+     * table and number, each dish big with its quantity, its details small underneath, no prices; the total quantity,
+     * the note, the time.
+     */
+    fun renderKitchen(t: KitchenTicketPrint): List<PrintOp> {
+        val ops = mutableListOf<PrintOp>()
+        val bigCols = width / 2
+
+        ops += PrintOp.Text(t.station.uppercase(), Align.CENTER, bold = true, big = true)
+        ops += PrintOp.Text("HORS LIGNE", Align.CENTER, bold = true)
+        ops += PrintOp.Feed(1)
+        ops += PrintOp.Text(padBetween(t.left, t.right, width))
+        ops += separator()
+
+        t.items.forEach { item ->
+            val qty = "x${item.quantity}"
+            val nameLines = wrap(item.name, maxOf(1, bigCols - qty.length - 1))
+            ops += PrintOp.Text(padBetween(nameLines.first(), qty, bigCols), bold = true, big = true)
+            nameLines.drop(1).forEach { ops += PrintOp.Text(it, bold = true, big = true) }
+            item.details.forEach { detail -> wrap(detail, width - 5).forEachIndexed { i, part -> ops += PrintOp.Text((if (i == 0) "   - " else "     ") + part) } }
+        }
+
+        ops += separator()
+        ops += PrintOp.Text(t.totalQuantity, bold = true)
+        t.note?.takeIf { it.isNotBlank() }?.let { note -> wrap(note, width).forEach { ops += PrintOp.Text(it, bold = true) } }
+        ops += PrintOp.Text(t.dateTime)
+        ops += PrintOp.Feed(3)
+        ops += PrintOp.Cut
+        return ops
+    }
+
+    private fun padBetween(left: String, right: String, cols: Int): String {
+        val gap = maxOf(1, cols - left.length - right.length)
+        return left + " ".repeat(gap) + right
+    }
+
     /** The test ticket of Réglages → "Imprimer un test". */
     fun renderTest(restaurant: String, lines: List<Pair<String, String>>): List<PrintOp> = buildList {
         add(PrintOp.Text("AltosPOS", Align.CENTER, bold = true, big = true))

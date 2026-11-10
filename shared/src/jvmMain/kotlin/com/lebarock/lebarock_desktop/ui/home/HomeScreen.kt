@@ -79,7 +79,7 @@ import java.util.Locale
 const val NO_CAISSE_MESSAGE = "Ce compte n'a pas de caisse. Demandez au gérant de vous en attribuer une."
 
 @Composable
-fun HomeScreen(model: HomeModel, restaurantName: String, onSwitchUser: () -> Unit) {
+fun HomeScreen(model: HomeModel, restaurantName: String, onSwitchUser: () -> Unit, reviewCount: Int = 0, onOpenReview: () -> Unit = {}) {
     val session by model.session.collectAsState()
     val s = session ?: return
     val snackbar = remember { SnackbarHostState() }
@@ -113,6 +113,7 @@ fun HomeScreen(model: HomeModel, restaurantName: String, onSwitchUser: () -> Uni
                         },
                     )
                 }
+                com.lebarock.lebarock_desktop.ui.offline.ReviewHomeCard(reviewCount, onOpenReview)
                 Tiles(HomeTiles.of(s.rights)) { model.open(it, hasCaisse = s.caisse != null) }
             }
         }

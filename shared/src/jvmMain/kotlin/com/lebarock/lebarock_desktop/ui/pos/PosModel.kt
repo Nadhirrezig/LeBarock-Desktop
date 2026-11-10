@@ -613,8 +613,13 @@ class PosModel(
                 when (action) {
                     "bill_print" -> afterBill("Commande #$number facturée.", sent.print)
                     // « Encaisser Ticket »: billed, then the payment window (web `saveOrder('bill', 'payment')`).
-                    "bill" -> openPayment(sent.value.id, number)
-                    else -> finished("Commande #$number envoyée en cuisine.")
+                    "bill" -> {
+                        // Offline: a kitchen ticket that did not come out is said before the window.
+                        sent.print?.takeIf { !it.ok }?.let { messageChannel.trySend(it.message) }
+                        openPayment(sent.value.id, number)
+                    }
+                    // Offline, the kitchen tickets print on this PC: where they came out (or why not) is said too.
+                    else -> finished(listOfNotNull("Commande #$number envoyée en cuisine.", sent.print?.message).joinToString(" "))
                 }
             }
             .onFailure { failed(it, action, orderIdFallback = null) }
@@ -630,10 +635,12 @@ class PosModel(
                 failed(error, action, orderIdFallback = detail.id)
                 return
             }
+            val kitchen = added.getOrNull()?.print
             if (action == "kot") {
-                finished("Nouveau ticket envoyé : commande #${detail.orderNumber}.")
+                finished(listOfNotNull("Nouveau ticket envoyé : commande #${detail.orderNumber}.", kitchen?.message).joinToString(" "))
                 return
             }
+            kitchen?.takeIf { !it.ok }?.let { messageChannel.trySend(it.message) }
             updateCart(cart.cleared())
         }
         if (action == "bill") {

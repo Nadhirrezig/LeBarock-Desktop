@@ -131,7 +131,10 @@ fun App(container: AppContainer) {
                     } else {
                         rememberScreenModel(screen to "offline") { com.lebarock.lebarock_desktop.ui.settings.OfflineModel(container.offline, container.sessions) }
                     }
-                    SettingsScreen(model, printing, canGoBack = navigator.canGoBack, onBack = navigator::back, offline = offline)
+                    SettingsScreen(
+                        model, printing, canGoBack = navigator.canGoBack, onBack = navigator::back, offline = offline,
+                        onOpenReview = { navigator.push(Screen.Review) },
+                    )
                 }
                 is Screen.Login -> {
                     val model = rememberScreenModel(screen to settings.server.baseUrl) {
@@ -158,7 +161,8 @@ fun App(container: AppContainer) {
                             }
                         }
                     }
-                    HomeScreen(model, restaurantName = settings.restaurantName, onSwitchUser = {
+                    val reviewCount by container.offline.reviewCount.collectAsState()
+                    HomeScreen(model, restaurantName = settings.restaurantName, reviewCount = reviewCount, onOpenReview = { navigator.push(Screen.Review) }, onSwitchUser = {
                         scope.launch {
                             hadSession = false
                             container.repository.logout("changement d'utilisateur")
@@ -210,6 +214,10 @@ fun App(container: AppContainer) {
                     }
                     LaunchedEffect(model) { screen.select?.let(model::select) }
                     OrdersScreen(model, onBack = navigator::back)
+                }
+                Screen.Review -> {
+                    val model = rememberScreenModel(Screen.Review) { com.lebarock.lebarock_desktop.ui.offline.ReviewModel(container.offline) }
+                    com.lebarock.lebarock_desktop.ui.offline.ReviewScreen(model, onBack = navigator::back)
                 }
                 Screen.CashRegister -> {
                     val model = rememberScreenModel(Screen.CashRegister) {

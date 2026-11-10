@@ -32,9 +32,13 @@ class AppContainer(dataDir: File = AppInfo.dataDir) {
     val offline = com.lebarock.lebarock_desktop.data.offline.OfflineSync(offlineStore, api, settings, sessions, secrets, connection, offlineScope)
     val ticketPrinter = TicketPrinter(settings)
     val agentClient = AgentClient { api.agentHttp() }
-    val orders = com.lebarock.lebarock_desktop.data.OrdersRepository(repository, settings, ticketPrinter, api.json)
+    /** Offline step 2: orders taken on this PC while the caisse does not answer, printed on its own printer. */
+    val offlineOrders = com.lebarock.lebarock_desktop.data.offline.OfflineOrders(offlineStore, offline, sessions, ticketPrinter, api.json)
+    val orders = com.lebarock.lebarock_desktop.data.OrdersRepository(repository, settings, ticketPrinter, api.json, offlineOrders, offline)
     val cashRegister = com.lebarock.lebarock_desktop.data.CashRegisterRepository(repository, settings, ticketPrinter, api.json)
-    val itemImages = com.lebarock.lebarock_desktop.ui.pos.ItemImages(http = { api.images() }, baseUrl = { settings.current.server.baseUrl })
+    val itemImages = com.lebarock.lebarock_desktop.ui.pos.ItemImages(
+        http = { api.images() }, baseUrl = { settings.current.server.baseUrl }, offline = { connection.offline.value },
+    )
 
     /** Ask the window to end the session and show the sign-in (window closed to the tray). */
     val lockRequests = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)

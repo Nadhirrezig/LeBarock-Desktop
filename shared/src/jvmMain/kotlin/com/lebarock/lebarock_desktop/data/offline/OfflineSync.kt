@@ -92,6 +92,9 @@ class OfflineSync(
 
         /** What this app is to the caisse's sync API: it names the PC « D1 », « D2 »… and lists it as « Caisse PC ». */
         const val KIND = "desktop"
+
+        /** The POS context the caisse last gave (order types): kept with the copy for the offline cart (step 2). */
+        const val POS_CONTEXT_PART = "pos_context"
     }
 
     private val json = client.json
@@ -209,6 +212,18 @@ class OfflineSync(
 
     /** Outbox first: once something waits, new actions queue behind it so the caisse gets them in order. */
     fun shouldQueue(): Boolean = status.value.offline || status.value.pending > 0
+
+    /**
+     * The same, read from the store itself (the status flow follows a write a moment later): an action queued a
+     * moment ago keeps the next one behind it, even if the caisse answered in between.
+     */
+    suspend fun mustQueue(): Boolean = monitor.offline.value || store.outboxSize() > 0
+
+    /** The POS context the caisse just gave (online): its order types are what the offline cart offers. */
+    suspend fun rememberPosContext(context: JsonObject) {
+        val part = store.snapshotPart("static") ?: return
+        store.saveSnapshotPart(SnapshotPartEntity(POS_CONTEXT_PART, null, part.caisseId, part.userId, context.toString(), now()))
+    }
 
     private fun api(): AltosApi? = settings.current.server.takeIf { it.isConfigured }?.let { client.apiFor(it.baseUrl) }
 

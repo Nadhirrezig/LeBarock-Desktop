@@ -371,7 +371,8 @@ private fun CartPanel(model: PosModel, ctx: PosContextDto, compact: Boolean, mod
     if (model.detailsOpen) {
         AppDialog(
             model.existingOrder?.let { "Commande #${it.orderNumber}" } ?: "Commande #${ctx.nextOrderNumber ?: "—"}",
-            onDismiss = { model.detailsOpen = false }, width = 460.dp,
+            // 540: the number (« #D1-001 » offline), the table and the covers' − / + on one line.
+            onDismiss = { model.detailsOpen = false }, width = 540.dp,
             actions = { AppButton("Fermer", { model.detailsOpen = false }) },
         ) {
             CartHeaderContent(model, ctx)

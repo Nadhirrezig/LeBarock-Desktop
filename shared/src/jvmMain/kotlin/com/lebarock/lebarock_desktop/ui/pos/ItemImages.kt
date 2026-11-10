@@ -37,6 +37,8 @@ class ItemImages(
     private val decode: (bytes: ByteArray, svg: Boolean) -> Painter = ::decodePainter,
     placeholderOf: () -> Painter = { bundled("food") },
     private val now: () -> Long = System::currentTimeMillis,
+    /** Offline (step 2): photos come from the disk cache whatever their age (the caisse cannot be asked). */
+    private val offline: () -> Boolean = { false },
 ) {
     /** Where a card's picture comes from. */
     sealed interface Source {
@@ -67,7 +69,8 @@ class ItemImages(
     private suspend fun fetch(url: String): Painter = withContext(Dispatchers.IO) {
         failedAt[url]?.let { if (now() - it < RETRY_MILLIS) return@withContext placeholder }
         runCatching {
-            http().newCall(Request.Builder().url(url).build()).execute().use { response ->
+            val request = Request.Builder().url(url).apply { if (offline()) cacheControl(okhttp3.CacheControl.FORCE_CACHE) }.build()
+            http().newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("HTTP ${response.code}")
                 val svg = url.substringBefore('?').lowercase().endsWith(".svg") ||
                     response.header("Content-Type").orEmpty().contains("svg")

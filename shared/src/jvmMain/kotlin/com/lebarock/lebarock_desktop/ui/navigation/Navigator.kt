@@ -22,7 +22,7 @@ sealed interface Screen {
     data class Tables(val message: String? = null) : Screen
 
     /** Commandes; [message] to show on arrival, [select] the order to open. */
-    data class Orders(val message: String? = null, val select: Long? = null) : Screen
+    data class Orders(val message: String? = null, val select: Long? = null, val toPay: Boolean = false) : Screen
 }
 
 /** A small back stack: the counter has few screens, all inside one window. */

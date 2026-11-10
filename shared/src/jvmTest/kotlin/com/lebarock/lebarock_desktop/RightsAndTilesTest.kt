@@ -66,8 +66,8 @@ class RightsAndTilesTest {
     }
 
     @Test
-    fun d4_brings_the_tables() {
-        val built = setOf(Section.SETTINGS, Section.POS, Section.ORDERS, Section.TABLES)
+    fun d5_brings_the_payment() {
+        val built = setOf(Section.SETTINGS, Section.POS, Section.ORDERS, Section.TABLES, Section.PAYMENT)
         Section.entries.forEach { assertEquals(it in built, it.available, it.name) }
         assertTrue(Section.POS.needsCaisse && Section.PAYMENT.needsCaisse && Section.CASH_REGISTER.needsCaisse)
         assertFalse(Section.ORDERS.needsCaisse, "reading the day's orders needs no Caisse")

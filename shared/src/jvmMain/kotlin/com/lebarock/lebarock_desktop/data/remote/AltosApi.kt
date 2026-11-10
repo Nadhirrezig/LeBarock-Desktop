@@ -61,6 +61,8 @@ interface AltosApi {
         @Query("status") status: String? = null,
         @Query("date_from") dateFrom: String? = null,
         @Query("date_to") dateTo: String? = null,
+        // D5: « À encaisser »: billed and on-credit checks of every day.
+        @Query("to_pay") toPay: Int? = null,
     ): OrdersResponse
 
     @GET("api/mobile/orders/{id}")
@@ -141,4 +143,8 @@ interface AltosApi {
 
     @POST("api/mobile/orders/{id}/tip")
     suspend fun tip(@Path("id") id: Long, @Body body: TipRequest): Envelope<TipResultDto>
+
+    /** « Remise » on an open check (D5, « Appliquer une remise »). */
+    @POST("api/mobile/orders/{id}/discount")
+    suspend fun setDiscount(@Path("id") id: Long, @Body body: DiscountRequest): Envelope<OrderDetailDto>
 }

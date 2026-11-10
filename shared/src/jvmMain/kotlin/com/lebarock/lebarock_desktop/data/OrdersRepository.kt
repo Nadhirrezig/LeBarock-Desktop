@@ -9,6 +9,11 @@ import com.lebarock.lebarock_desktop.data.remote.CustomerDto
 import com.lebarock.lebarock_desktop.data.remote.CustomerRequest
 import com.lebarock.lebarock_desktop.data.remote.NewOrderRefDto
 import com.lebarock.lebarock_desktop.data.remote.PaymentMethodRequest
+import com.lebarock.lebarock_desktop.data.remote.DiscountRequest
+import com.lebarock.lebarock_desktop.data.remote.PaymentContextDto
+import com.lebarock.lebarock_desktop.data.remote.PaymentRequest
+import com.lebarock.lebarock_desktop.data.remote.PaymentResultDto
+import com.lebarock.lebarock_desktop.data.remote.TipRequest
 import com.lebarock.lebarock_desktop.data.remote.SplitLine
 import com.lebarock.lebarock_desktop.data.remote.SplitRequest
 import com.lebarock.lebarock_desktop.data.remote.TableIdRequest
@@ -82,8 +87,12 @@ class OrdersRepository(
 
     // ---- Commandes ----
 
-    /** Today's orders (the caisse's day), with the counts per status for the chips. */
-    suspend fun orders(status: String? = null): Result<OrdersResponse> = caisse.call { caisse.api().orders(status = status) }
+    /**
+     * Today's orders (the caisse's day), with the counts per status for the chips; [toPay]: the checks still to pay
+     * (billed or on credit) whatever their day (D5, « À encaisser »).
+     */
+    suspend fun orders(status: String? = null, toPay: Boolean = false): Result<OrdersResponse> =
+        caisse.call { caisse.api().orders(status = status, toPay = if (toPay) 1 else null) }
 
     suspend fun orderDetail(id: Long): Result<OrderDetailDto> = caisse.call { caisse.api().orderDetail(id).data ?: throw unexpected() }
 
@@ -178,6 +187,32 @@ class OrdersRepository(
     suspend fun releaseTable(tableId: Long): Result<String> = caisse.call {
         caisse.api().releaseTable(tableId).message ?: "Table libérée."
     }
+
+    // ---- D5: Encaisser, as the web's payment window ----
+
+    /** What the payment window needs: the due, the paid amount, the methods this account may use, the split's lines. */
+    suspend fun paymentContext(orderId: Long): Result<PaymentContextDto> = caisse.call {
+        caisse.api().paymentContext(orderId).data ?: throw unexpected()
+    }
+
+    /**
+     * Records a payment (cash, card, credit, or a split in one go). The receipt prints by itself once the check is
+     * settled (client, 2026-11-10), where Réglages says: its outcome is in [Printed.print] (null while it stays open).
+     */
+    suspend fun pay(orderId: Long, request: PaymentRequest): Result<Printed<PaymentResultDto>> = caisse.call {
+        val envelope = caisse.api().pay(orderId, request.copy(printTarget = target.apiValue))
+        Printed(envelope.data ?: throw unexpected(), outcome(envelope))
+    }
+
+    /** « Pourboire »: sets (or, at 0, takes off) the check's tip; the total follows. */
+    suspend fun tip(orderId: Long, amount: Double, note: String?): Result<Unit> = caisse.call {
+        caisse.api().tip(orderId, TipRequest(amount, note?.trim()?.ifEmpty { null }))
+        Unit
+    }
+
+    /** « Remise » on an open check (fixed | percent); [type] null takes it off. */
+    suspend fun setDiscount(orderId: Long, type: String?, value: Double?): Result<CheckChange> =
+        change { caisse.api().setDiscount(orderId, DiscountRequest(type, value)) }
 
     private suspend fun change(block: suspend () -> Envelope<OrderDetailDto>): Result<CheckChange> = caisse.call {
         val envelope = block()

@@ -21,6 +21,8 @@ import com.lebarock.lebarock_desktop.data.session.SessionHolder
 import com.lebarock.lebarock_desktop.pos.Cart
 import com.lebarock.lebarock_desktop.pos.CartMath
 import com.lebarock.lebarock_desktop.pos.CartTotals
+import com.lebarock.lebarock_desktop.pos.Discount
+import com.lebarock.lebarock_desktop.ui.payment.PaymentFlow
 import com.lebarock.lebarock_desktop.pos.MenuSection
 import com.lebarock.lebarock_desktop.pos.ModifierRules
 import com.lebarock.lebarock_desktop.pos.OrderType
@@ -44,6 +46,9 @@ data class ModifierPick(
 
 /** The stock did not take the round (C5): it waits on check [orderId], nothing reached the kitchen. */
 data class StockPrompt(val orderId: Long, val message: String, val canForce: Boolean, val action: String)
+
+/** The web POS's « Ajouter une remise » window: a value and Montant fixe / Pourcentage. */
+data class DiscountForm(val type: String = Discount.FIXED, val valueText: String = "", val error: String? = null, val busy: Boolean = false)
 
 /** The covers window for a free table (web: « Nombre de Couverts », 1 by default). */
 data class CoversPick(val table: TableDto, val count: Int = 1)
@@ -107,6 +112,12 @@ class PosModel(
     var removedCharges by mutableStateOf<Set<Long>>(emptySet())
         private set
 
+    /** D5: the new order's « Remise » (with « Appliquer une remise »), sent with it as on the web. */
+    var discount by mutableStateOf<Discount?>(null)
+        private set
+    var discountForm by mutableStateOf<DiscountForm?>(null)
+        private set
+
     /** « Nouveau ticket » on an open check: the check as the caisse has it. */
     var existing by mutableStateOf<UiState<OrderDetailDto>?>(null)
         private set
@@ -162,6 +173,23 @@ class PosModel(
         onClosed = { message, orderId -> finished(message, orderId) },
     )
 
+    /**
+     * D5: « Encaisser Ticket » opens the web's payment window on the check just billed. Settled (paid or on credit):
+     * the POS is done with it; closed before: the check stays billed, to be paid from Commandes.
+     */
+    val payment = PaymentFlow(orders, idle, scope) { orderId, settled, message ->
+        val number = existingOrder?.orderNumber ?: payingNumber
+        val text = when {
+            settled -> message ?: "Ticket réglé."
+            message != null -> "Commande #$number : $message"
+            else -> "Commande #$number facturée : à encaisser depuis Commandes."
+        }
+        finished(text, orderId)
+    }
+
+    /** The number of the order the window is on (a new one has no detail here). */
+    private var payingNumber: String = ""
+
     init {
         load()
         existingOrderId?.let { openExisting(it) }
@@ -174,6 +202,7 @@ class PosModel(
     override fun onDispose() {
         hold?.release()
         hold = null
+        payment.dispose()
     }
 
     fun load() {
@@ -417,13 +446,82 @@ class PosModel(
         if (!appendMode) removedCharges = removedCharges + id
     }
 
+    // ---- « Remise » (web `showAddDiscount` / `addDiscounts` / `removeCurrentDiscount`) ----
+
+    val canDiscount: Boolean get() = rights?.applyDiscount == true
+
+    /** The check being added to: its discount can change while it is open (kot / billed), as on the web. */
+    private val checkTakesDiscount: Boolean
+        get() = existingOrder?.status.let { it == "kot" || it == "billed" }
+
+    fun openDiscount() {
+        if (!canDiscount) return
+        if (appendMode && !checkTakesDiscount) return
+        val current = if (appendMode) existingOrder?.discountType?.let { t -> Discount(t, existingOrder?.discountValue ?: 0.0) } else discount
+        discountForm = DiscountForm(
+            type = current?.type ?: Discount.FIXED,
+            valueText = current?.value?.takeIf { it > 0 }?.let { com.lebarock.lebarock_desktop.pos.PaymentForm.plainAmount(it) }.orEmpty(),
+        )
+    }
+
+    fun editDiscount(block: (DiscountForm) -> DiscountForm) {
+        discountForm = discountForm?.let { if (it.busy) it else block(it).copy(error = null) }
+    }
+
+    fun closeDiscount() {
+        if (discountForm?.busy != true) discountForm = null
+    }
+
+    fun saveDiscount() {
+        val f = discountForm ?: return
+        if (f.busy) return
+        val value = f.valueText.replace(',', '.').toDoubleOrNull()
+        when {
+            value == null || value < 0 -> { discountForm = f.copy(error = "Indiquez la remise (un nombre)."); return }
+            f.type == Discount.PERCENT && value > 100 -> { discountForm = f.copy(error = "La remise ne peut pas dépasser 100 %."); return }
+        }
+        val next = Discount(f.type, value!!).takeIf { it.value > 0 }
+        val check = existingOrder
+        if (check == null) {
+            discount = next
+            discountForm = null
+            return
+        }
+        // On an open check the web saves it at once on the order.
+        discountForm = f.copy(busy = true)
+        scope.launch {
+            orders.setDiscount(check.id, next?.type, next?.value)
+                .onSuccess { change ->
+                    existing = UiState.Success(change.order)
+                    discountForm = null
+                    messageChannel.trySend(change.message)
+                }
+                .onFailure { e -> discountForm = f.copy(busy = false, error = e.message ?: "Remise refusée.") }
+        }
+    }
+
+    /** The × on the « Remise » line. */
+    fun removeDiscount() {
+        val check = existingOrder
+        if (check == null) {
+            discount = null
+            return
+        }
+        if (!canDiscount || !checkTakesDiscount) return
+        scope.launch {
+            orders.setDiscount(check.id, null, null)
+                .onSuccess { change -> existing = UiState.Success(change.order); messageChannel.trySend(change.message) }
+                .onFailure { e -> messageChannel.trySend(e.message ?: "Remise non retirée.") }
+        }
+    }
+
     // ---- Totals (web calculateTotal) ----
 
     val totals: CartTotals
         get() {
             val ctx = (context as? UiState.Success)?.data
             val charges = if (appendMode || ctx == null) emptyList() else CartMath.chargesFor(ctx.charges, orderType, removedCharges)
-            return CartMath.totals(cart.lines, if (appendMode) emptyList() else ctx?.taxes.orEmpty(), charges)
+            return CartMath.totals(cart.lines, if (appendMode) emptyList() else ctx?.taxes.orEmpty(), charges, if (appendMode) null else discount)
         }
 
     // ---- « Nouveau ticket » on an open check ----
@@ -451,6 +549,8 @@ class PosModel(
         covers = 1
         roundNote = ""
         removedCharges = emptySet()
+        discount = null
+        discountForm = null
         waiterId = sessions.current?.user?.id
         existing = null
         totalsOpen = false
@@ -482,7 +582,7 @@ class PosModel(
     fun submit(action: String) {
         if (sending) return
         val existingDetail = existingOrder
-        if (cart.isEmpty && !(action == "bill_print" && existingDetail != null)) {
+        if (cart.isEmpty && !((action == "bill_print" || action == "bill") && existingDetail != null)) {
             messageChannel.trySend("Ajoutez des articles au panier.")
             return
         }
@@ -504,12 +604,16 @@ class PosModel(
             action = action,
             items = cart.requestItems(),
             removedChargeIds = removedCharges.toList(),
+            discountType = discount?.takeIf { r?.applyDiscount == true }?.type,
+            discountValue = discount?.takeIf { r?.applyDiscount == true }?.value,
         )
         orders.sendOrder(request)
             .onSuccess { sent ->
                 val number = sent.value.orderNumber
                 when (action) {
                     "bill_print" -> afterBill("Commande #$number facturée.", sent.print)
+                    // « Encaisser Ticket »: billed, then the payment window (web `saveOrder('bill', 'payment')`).
+                    "bill" -> openPayment(sent.value.id, number)
                     else -> finished("Commande #$number envoyée en cuisine.")
                 }
             }
@@ -517,22 +621,40 @@ class PosModel(
     }
 
     private suspend fun submitOnExisting(detail: OrderDetailDto, action: String) {
-        if (!cart.isEmpty) {
+        // A round on a billed check reopens it (the caisse): it is billed again below.
+        val addsRound = !cart.isEmpty
+        if (addsRound) {
             val added = orders.addItems(detail.id, AddItemsRequest(items = cart.requestItems(), note = roundNote.ifBlank { null }))
             val error = added.exceptionOrNull()
             if (error != null) {
                 failed(error, action, orderIdFallback = detail.id)
                 return
             }
-            if (action != "bill_print") {
+            if (action == "kot") {
                 finished("Nouveau ticket envoyé : commande #${detail.orderNumber}.")
                 return
             }
             updateCart(cart.cleared())
         }
+        if (action == "bill") {
+            // « Encaisser Ticket » on a running check: the bill first (web « Addition + paiement »); a check already
+            // billed (or partly paid, or on credit) goes straight to the window.
+            if (detail.status == "kot" || addsRound) {
+                val billed = orders.bill(detail.id, print = false)
+                billed.exceptionOrNull()?.let { failed(it, action, orderIdFallback = detail.id); return }
+            }
+            openPayment(detail.id, detail.orderNumber)
+            return
+        }
         orders.bill(detail.id, print = true)
             .onSuccess { afterBill("Commande #${detail.orderNumber} facturée.", it.print) }
             .onFailure { failed(it, action, orderIdFallback = detail.id) }
+    }
+
+    private fun openPayment(orderId: Long, number: String) {
+        payingNumber = number
+        updateCart(cart.cleared())
+        payment.open(orderId, number)
     }
 
     /** The bill is made: say where the ticket came out, or keep a window with why it did not. */
@@ -573,7 +695,11 @@ class PosModel(
         if (prompt.orderId <= 0L || sending) return
         sending = true
         scope.launch {
-            if (prompt.action == "bill_print") {
+            if (prompt.action == "bill") {
+                orders.bill(prompt.orderId, print = false, force = true)
+                    .onSuccess { stockPrompt = null; openPayment(prompt.orderId, it.value.orderNumber) }
+                    .onFailure { stillRefused(prompt, it) }
+            } else if (prompt.action == "bill_print") {
                 orders.bill(prompt.orderId, print = true, force = true)
                     .onSuccess { stockPrompt = null; afterBill("Envoi forcé : commande facturée.", it.print) }
                     .onFailure { stillRefused(prompt, it) }

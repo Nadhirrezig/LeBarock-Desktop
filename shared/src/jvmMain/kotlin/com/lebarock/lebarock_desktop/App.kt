@@ -141,6 +141,8 @@ fun App(container: AppContainer) {
                                 Section.POS -> navigator.push(Screen.Pos())
                                 Section.TABLES -> navigator.push(Screen.Tables())
                                 Section.ORDERS -> navigator.push(Screen.Orders())
+                                // D5: the checks to pay (billed), « Encaisser » on the one picked.
+                                Section.PAYMENT -> navigator.push(Screen.Orders(toPay = true))
                                 else -> Unit
                             }
                         }
@@ -186,10 +188,14 @@ fun App(container: AppContainer) {
                 }
                 is Screen.Orders -> {
                     val model = rememberScreenModel(screen) {
-                        OrdersModel(container.orders, container.sessions, screen.message) { id ->
-                            navigator.replaceTop(Screen.Orders(select = id))
-                            navigator.push(Screen.Pos(orderId = id))
-                        }
+                        OrdersModel(
+                            container.orders, container.sessions, container.idle, screen.message,
+                            onNewRound = { id ->
+                                navigator.replaceTop(Screen.Orders(select = id, toPay = screen.toPay))
+                                navigator.push(Screen.Pos(orderId = id))
+                            },
+                            initialFilter = if (screen.toPay) com.lebarock.lebarock_desktop.ui.orders.OrderFilter.TO_PAY else com.lebarock.lebarock_desktop.ui.orders.OrderFilter.ALL,
+                        )
                     }
                     LaunchedEffect(model) { screen.select?.let(model::select) }
                     OrdersScreen(model, onBack = navigator::back)

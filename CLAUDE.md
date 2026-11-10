@@ -95,6 +95,12 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   an **occupied table opens the POS on its check, like the web** (the check's actions live in that POS's order panel
   and in Commandes); a **free table asks its covers and opens the POS — nothing is recorded on the caisse until
   « Envoyer »**; the floor refreshes **every 15 s, like the web** (and at once after an action, and when coming back).
+- **D5 (client, 2026-11-10: "follow the web logic"):** the payment window **copies the web's** (`Order/AddPayment`,
+  May 2026 layout); the **discount lives in the POS cart, like the web** (« Ajouter une remise » in the totals, fixed or
+  %), shown in the window's summary but not changed there; the **receipt prints by itself** once the check is settled
+  (Réglages → « Impression des tickets »), the window then shows the change and « Réimprimer »; « Encaisser » from **every
+  entry**: the POS (« Encaisser Ticket »), Commandes (« Encaisser » on a billed or on-credit check, as the web), Accueil
+  (« À encaisser »: the checks still to pay, every day) and the floor (an occupied table opens the POS on its check).
 - **Window sizes (client, 2026-11-08):** the counter PC stays at **100 %**. The 125 % size is still checked as the
   responsive case ("not a bug, it is how the responsiveness should act"); 100 % is the reference.
 
@@ -288,6 +294,54 @@ back on the check it ended on (a merge moves it; gone → nothing selected); « 
 (`LineRemoval`); the floor keeps one read at a time (a poll skips while one runs, « Actualiser » cancels it); tile
 buttons 48 dp, spacing from `Dimens`. 76 desktop tests.
 
+## How D5 is built (2026-11-10)
+
+- **Data:** `PaymentContextDto` (+ `tip_note`, discount), `PaymentRequest.split` (`SplitPaymentDto` / `SplitPartDto` /
+  `SplitPartItemDto`: every part in one request, as the web window), `DiscountRequest`, `SendOrderRequest.discount_*`,
+  `OrderCountsDto.toPay`. `OrdersRepository`: `paymentContext`, `pay` (always sends `print_target`; the receipt the caisse
+  hands back for « Sur cet appareil » prints here, its outcome in `Printed.print`), `tip`, `setDiscount`, `orders(toPay)`.
+- **`pos/Payment.kt`** — the web window as data, no screen: `PaymentForm` (methods by right: « À crédit » only with
+  « Give Credit »; the TPE and the credit take the whole due, amount and keypad locked; cash keypad where the first key
+  replaces the amount filled in, two decimals, « Montant exact », quick notes 50 / 100 / 500 / 1000; change / what stays
+  to pay; credit customer picked or name + phone; splits: equal parts of what is left with the cents on the first,
+  free amounts that must make the due, by article with each line shared once at the caisse's unit prices (`items` of the
+  context: discount, taxes, charges and tip shared in); `problem` = what stops « Valider »; `request()` = what the web
+  sends), `TipForm` (% or amount, 5 / 10 / 15 / 20, on the total before the tip; 0 takes it off). `Discount` +
+  `CartMath.totals(…, discount)`: the web's `calculateTotal` (percent of the sub-total or fixed capped at it, taxes and
+  charges on what is left).
+- **`ui/payment/PaymentFlow`** (state holder, one for the POS and one for Commandes) + **`PaymentWindow`**: « Paiement ·
+  Commande #n · total »; « Paiement complet / Partager l'addition »; tiles Espèces / Carte (TPE) / À crédit / Pourboire
+  (green once a tip is on); « Montant » with the web's help lines; credit: search (≥ 2 characters, 5 results), « Changer »,
+  or new name + phone; « Addition » summary (remise, total and tip, paid, change or what stays to pay); the keypad on the
+  right (greyed when locked). Split: the chooser, part rows with Espèces / Carte (TPE), « Nouvelle part », × from 3 parts;
+  by article: part tabs, articles left with « +1 » / « Tout », the open part with its method, « − ». « Valider le
+  paiement » / « Mettre à crédit »; a refusal stays in the window as the caisse wrote it; a warning when the cash register
+  is enforced and no session is open. A partial payment keeps the window on the check (« Paiement enregistré. Reste à
+  payer : … »). Settled: « Ticket réglé. » with the change large, or « Mis à crédit. » with the customer; « Reçu imprimé /
+  non imprimé » with where or why; « Réimprimer » updates that line; « Terminer ». The idle lock is held while it is open.
+  At 125 % its body scrolls (keys 48 dp).
+- **Entries:** POS « Encaisser Ticket » — a new order is sent with `action: bill` then the window; on a table's check the
+  new lines go as a round, the check is billed (if running or a round was added), then the window; stock held back →
+  « Forcer l'envoi » bills (no print) then the window. After the window the POS is done with the order (fresh POS, or back
+  to the floor / Commandes with the message); closed before paying → « facturée : à encaisser depuis Commandes ».
+  Commandes: « Encaisser » (green) on `billed` / `payment_due`. Accueil « Encaisser » → Commandes on « À encaisser »
+  (`to_pay`, every day; the chip only with « Encaisser »); a time not today reads « 08/11 21:13 ».
+- **Discount in the cart:** totals breakdown « Remise (10 %) −5.900 » in green with ×, « −5.900 » on the folded total,
+  « Ajouter une remise » / « Modifier la remise » (with « Appliquer une remise », lines in the cart); window: Montant fixe /
+  Pourcentage, the value field takes the keyboard, Enter saves. A new order sends it with the order; a table's check opened
+  in the POS changes at once on the caisse (`/discount`), shown under « Commande #n (avant ce ticket) ».
+- Tests: 85 (+ `PaymentTest` 9: the cart's discount before taxes, cash keypad and change, TPE / credit locked and the
+  credit right, equal / custom / by-article splits, the tip, the calls and their bodies, the receipt printed here, a
+  refusal as the caisse wrote it; `RightsAndTilesTest.d5_brings_the_payment`).
+- Checked end to end (2026-11-10) on the packaged app with the local caisse (cash register session open, tip on, a
+  stand-in Ethernet printer) at 1366 × 768 and 1093 × 614: à emporter + 10 % → « Encaisser Ticket » → 60 in cash →
+  « Monnaie à rendre 6.900 DT », receipt with « Remise (10%) » and « Rendu 6.900 »; table 7 from the floor → « Encaisser
+  Ticket » → tip 10 % (125.400 DT) → by article: couscous in cash, the two Ojja by card → receipt with both payments, back
+  on the floor with the table's other check; Accueil « Encaisser » → « À encaisser » (3, from earlier days) → credit to a
+  customer found by name → paid later by card. Fixed by running it: « Encaisser Ticket » was cut by its icon, the discount
+  value field was squeezed, choice rows sat off the left edge, the reprint said its result twice; on the caisse the
+  ticket's « Remise (1%) » and the checks of earlier days (`to_pay`).
+
 ## Roadmap — step 4 (review approved 2026-11-08; ~17.5 days)
 
 | Step | Caisse | AltosPOS desktop | Effort | Status |
@@ -296,7 +350,7 @@ buttons 48 dp, spacing from `Dimens`. 76 desktop tests.
 | D2 | Print jobs per printer; branch key endpoint; X / Z thermal ticket fix; currency format fix; « Complet / Résumé » | Style system (client's note on D1); ticket printing (USB or Ethernet), test print, « Sur cet appareil / Imprimante de la caisse », "Directe" agent, tray + start with Windows | ~4 d | [x] built 2026-11-08, client: "Great, proceed to D3" |
 | D3 | POS context, waiter right, charge taken off, cancel like the web, bill date | POS (sections in Tri order, search, web cart always visible, table picker + à emporter, send, add round, bill, waiting stock / force) and Commandes | ~3 d | [x] built 2026-11-08, client: "proceed with D4" |
 | D4 | Table and check operations; table details | Tables with every operation | ~3.5 d | [x] built 2026-11-08, client to test |
-| D5 | Discount endpoint | Encaisser: cash + change, Carte (TPE), À crédit, split, tip, discount, receipt | ~2.5 d | [ ] |
+| D5 | Discount endpoint; checks to pay of every day | Encaisser: cash + change, Carte (TPE), À crédit, split, tip, discount, receipt | ~2.5 d | [x] built 2026-11-10, client to test |
 | D6 | Cash register and expense endpoints | Caisse: open with float, cash in / out / safe drop, X, Z with count, stock panel + "Envoyer la demande au stock", dépenses | ~3.5 d | [ ] |
 | D7 | CLAUDE.md | CLAUDE.md, release MSI, branches | ~0.5 d | [ ] |
 
@@ -349,3 +403,7 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
 - 2026-11-10 — D4 reviewed; client: "fix the issues". Fixed in the three repos (desktop part above; caisse and stock in
   their `CLAUDE.md`). Checked on the packaged app: a split ticket lists its lines in Commandes, floor tiles. 76 desktop
   tests; caisse 357; stock 47.
+- 2026-11-10 — D5 asked first (client's answers: the web's window; the discount in the POS cart like the web; the receipt
+  printed by itself; « Encaisser » from the POS, Commandes, Accueil and the floor — "follow the web logic"). Built (see
+  "How D5 is built"); caisse part in its `CLAUDE.md`. 85 desktop tests; caisse suite 365 passed. Next: the client tests D5
+  on the counter PC; then D6 (Caisse: cash register, X / Z, expenses).

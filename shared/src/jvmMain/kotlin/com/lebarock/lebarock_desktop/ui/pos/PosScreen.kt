@@ -56,6 +56,10 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material.icons.outlined.TableRestaurant
 import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.Sell
+import com.lebarock.lebarock_desktop.pos.Discount
+import com.lebarock.lebarock_desktop.ui.common.FormField
+import com.lebarock.lebarock_desktop.ui.payment.PaymentWindow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -77,6 +81,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -600,7 +607,16 @@ private fun CartFooter(model: PosModel, compact: Boolean) {
     Column(Modifier.fillMaxWidth().padding(if (compact) Dimens.s else Dimens.m), verticalArrangement = Arrangement.spacedBy(if (compact) Dimens.s else Dimens.sm)) {
         if (existing != null) {
             TotalRow("Commande #${existing.orderNumber} (avant ce ticket)", Money.format(existing.total, currency), strong = false)
+            // D5: the check's « Remise », as the web's order panel: shown, changed or taken off while it is open.
+            val checkOpen = existing.status == "kot" || existing.status == "billed"
+            val off = existing.discountAmount ?: 0.0
+            if (off > 0) {
+                DiscountRow(existing.discountType, existing.discountValue, off, currency, onRemove = if (model.canDiscount && checkOpen) model::removeDiscount else null)
+            }
             TotalRow("Ce ticket · ${totals.articleCount} art.", Money.format(totals.subTotal, currency), strong = true)
+            if (model.canDiscount && checkOpen) {
+                AddDiscountButton(if (off > 0) "Modifier la remise" else "Ajouter une remise", model::openDiscount)
+            }
         } else {
             Row(
                 Modifier.fillMaxWidth().clip(Dimens.shape).clickable { model.totalsOpen = !model.totalsOpen }.pointerHoverIcon(PointerIcon.Hand).padding(vertical = Dimens.xs),
@@ -608,6 +624,9 @@ private fun CartFooter(model: PosModel, compact: Boolean) {
             ) {
                 Text("Total", style = MaterialTheme.typography.titleMedium)
                 Text(" · ${totals.articleCount} art.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (totals.discount > 0) {
+                    Text("  −" + Money.plain(totals.discount, currency), style = MaterialTheme.typography.labelMedium, color = Success, fontWeight = FontWeight.SemiBold)
+                }
                 Icon(if (model.totalsOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = "Détail du total", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.weight(1f))
                 Text(Money.format(totals.total, currency), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -616,6 +635,9 @@ private fun CartFooter(model: PosModel, compact: Boolean) {
                 Column(verticalArrangement = Arrangement.spacedBy(Dimens.xs)) {
                     TotalRow("Article(s)", totals.articleCount.toString())
                     TotalRow("Sous-total", Money.format(totals.subTotal, currency))
+                    model.discount?.takeIf { totals.discount > 0 }?.let { d ->
+                        DiscountRow(d.type, d.value, totals.discount, currency, onRemove = model::removeDiscount)
+                    }
                     totals.charges.forEach { c ->
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text(c.charge.name + if (c.charge.isPercent) " (${pct(c.charge.value)}%)" else "", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -625,14 +647,21 @@ private fun CartFooter(model: PosModel, compact: Boolean) {
                         }
                     }
                     totals.taxes.forEach { t -> TotalRow("${t.tax.name} (${pct(t.tax.percent)}%)", Money.format(t.amount, currency)) }
+                    if (!model.cart.isEmpty && model.canDiscount) {
+                        AddDiscountButton(if (model.discount != null) "Modifier la remise" else "Ajouter une remise", model::openDiscount)
+                    }
                 }
             }
         }
         AppButton("Envoyer", { model.submit("kot") }, icon = Icons.AutoMirrored.Outlined.Send, large = !compact, loading = model.sending, enabled = !model.cart.isEmpty, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
-            // « Encaisser Ticket » comes with the payment window (D5): shown, not active yet.
+            // « Encaisser Ticket » (D5, web `saveOrder('bill', 'payment')`): billed, then the payment window.
             if (rights?.takePayment == true) {
-                AppButton("Encaisser Ticket", {}, kind = ButtonKind.SECONDARY, enabled = false, modifier = Modifier.weight(1f))
+                val payable = existing?.status.let { it == "kot" || it == "billed" || it == "payment_due" }
+                AppButton(
+                    "Encaisser Ticket", { model.submit("bill") }, kind = ButtonKind.SECONDARY,
+                    enabled = !model.sending && (!model.cart.isEmpty || payable), modifier = Modifier.weight(1f),
+                )
             }
             AppButton(
                 "Imprimer Ticket", { model.submit("bill_print") }, kind = ButtonKind.SECONDARY,
@@ -643,6 +672,27 @@ private fun CartFooter(model: PosModel, compact: Boolean) {
 }
 
 private fun pct(value: Double): String = if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
+
+/** « Remise (10 %) » in green with its ×, as the web cart. */
+@Composable
+private fun DiscountRow(type: String?, value: Double?, amount: Double, currency: CurrencyInfo, onRemove: (() -> Unit)?) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "Remise" + if (type == Discount.PERCENT && value != null) " (${pct(value)} %)" else "",
+            style = MaterialTheme.typography.bodyMedium, color = Success,
+        )
+        if (onRemove != null) IconBox(Icons.Outlined.Close, "Retirer la remise", tint = Danger, onClick = onRemove)
+        Spacer(Modifier.weight(1f))
+        Text("−" + Money.format(amount, currency), style = MaterialTheme.typography.bodyMedium, color = Success, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun AddDiscountButton(label: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        AppButton(label, onClick, kind = ButtonKind.TEXT, icon = Icons.Outlined.Sell)
+    }
+}
 
 @Composable
 private fun TotalRow(label: String, value: String, strong: Boolean = false) {
@@ -721,6 +771,8 @@ private fun Stepper(value: Int, onMinus: () -> Unit, onPlus: () -> Unit, label: 
 private fun PosDialogs(model: PosModel) {
     val currency = model.currency
     CheckDialogs(model.check, currency)
+    PaymentWindow(model.payment)
+    model.discountForm?.let { f -> DiscountDialog(model, f) }
     model.variationPick?.let { item ->
         AppDialog(item.name, onDismiss = model::closeVariations, subtitle = "Choisissez la variation", actions = { AppButton("Annuler", model::closeVariations, kind = ButtonKind.SECONDARY) }) {
             item.variations.forEach { v ->
@@ -830,6 +882,38 @@ private fun PosDialogs(model: PosModel) {
 }
 
 @OptIn(ExperimentalLayoutApi::class)
+/** The web's « Ajouter une remise »: the value, and Montant fixe / Pourcentage. */
+@Composable
+private fun DiscountDialog(model: PosModel, f: DiscountForm) {
+    val check = model.existingOrder
+    AppDialog(
+        "Ajouter une remise",
+        onDismiss = model::closeDiscount,
+        dismissible = !f.busy,
+        subtitle = check?.let { "Commande #${it.orderNumber} : la remise porte sur toute la commande." } ?: "Sur le sous-total ; taxes et frais sont calculés après la remise.",
+        actions = {
+            AppButton("Annuler", model::closeDiscount, kind = ButtonKind.SECONDARY, enabled = !f.busy)
+            AppButton("Enregistrer", model::saveDiscount, loading = f.busy)
+        },
+    ) {
+        val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+        LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+        ChoiceRow(
+            listOf(Choice(Discount.FIXED, "Montant fixe"), Choice(Discount.PERCENT, "Pourcentage")),
+            selected = f.type, onSelect = { t -> model.editDiscount { it.copy(type = t) } }, modifier = Modifier.fillMaxWidth(), itemWidth = 640.dp,
+        )
+        FormField(if (f.type == Discount.PERCENT) "Remise (%)" else "Remise (${model.currency.symbol})", error = f.error, help = "0 retire la remise.") {
+            TextInput(
+                f.valueText, { v -> model.editDiscount { it.copy(valueText = v.filter { c -> c.isDigit() || c == '.' || c == ',' }) } },
+                placeholder = "Valeur de la remise", isError = f.error != null,
+                modifier = Modifier.fillMaxWidth().focusRequester(focus).onPreviewKeyEvent { e ->
+                    if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && e.key == androidx.compose.ui.input.key.Key.Enter) { model.saveDiscount(); true } else false
+                },
+            )
+        }
+    }
+}
+
 @Composable
 private fun ModifierDialog(model: PosModel, pick: ModifierPick, currency: CurrencyInfo) {
     AppDialog(

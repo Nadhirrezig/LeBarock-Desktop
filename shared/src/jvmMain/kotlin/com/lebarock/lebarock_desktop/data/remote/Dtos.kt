@@ -274,6 +274,8 @@ data class OrderCountsDto(
     val paid: Int = 0,
     val canceled: Int = 0,
     val delivered: Int = 0,
+    // D5: every check still to pay, whatever its day (billed or on credit).
+    @SerialName("to_pay") val toPay: Int = 0,
 )
 
 @Serializable
@@ -417,6 +419,9 @@ data class SendOrderRequest(
     @SerialName("print_target") val printTarget: String? = null,
     // D3: extra charges taken off this new order before sending (as on the web POS).
     @SerialName("removed_charge_ids") val removedChargeIds: List<Long> = emptyList(),
+    // D5: the cart's « Remise » (fixed | percent), with « Appliquer une remise ».
+    @SerialName("discount_type") val discountType: String? = null,
+    @SerialName("discount_value") val discountValue: Double? = null,
 )
 
 @Serializable
@@ -471,6 +476,10 @@ data class PaymentContextDto(
     @SerialName("sub_total") val subTotal: Double = 0.0,
     @SerialName("discount_amount") val discountAmount: Double = 0.0,
     @SerialName("tip_amount") val tipAmount: Double = 0.0,
+    // D5: the tip's note and the check's discount (« Remise »), for the payment window.
+    @SerialName("tip_note") val tipNote: String? = null,
+    @SerialName("discount_type") val discountType: String? = null,
+    @SerialName("discount_value") val discountValue: Double? = null,
     @SerialName("amount_paid") val amountPaid: Double = 0.0,
     val due: Double = 0.0,
     @SerialName("currency_decimals") val currencyDecimals: Int = 3,
@@ -508,6 +517,37 @@ data class PaymentRequest(
     @SerialName("customer_phone") val customerPhone: String? = null,
     // Where the receipt prints once the check is settled: device | caisse.
     @SerialName("print_target") val printTarget: String? = null,
+    // D5: a divided bill settled in one go, as the web's window does (every part cash or card).
+    val split: SplitPaymentDto? = null,
+)
+
+/** The web window's split: equal | custom (amounts) | items (each part's articles at the window's unit prices). */
+@Serializable
+data class SplitPaymentDto(
+    val type: String,
+    val splits: List<SplitPartDto>,
+)
+
+@Serializable
+data class SplitPartDto(
+    // cash | card
+    @SerialName("payment_method") val paymentMethod: String,
+    val amount: Double? = null,
+    val items: List<SplitPartItemDto>? = null,
+)
+
+@Serializable
+data class SplitPartItemDto(
+    @SerialName("order_item_id") val orderItemId: Long,
+    val quantity: Int,
+    val price: Double,
+)
+
+/** POST /orders/{id}/discount (D5): fixed | percent; type null takes the discount off. */
+@Serializable
+data class DiscountRequest(
+    val type: String?,
+    val value: Double? = null,
 )
 
 @Serializable

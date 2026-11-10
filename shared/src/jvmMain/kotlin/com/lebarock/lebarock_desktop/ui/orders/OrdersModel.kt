@@ -11,6 +11,8 @@ import com.lebarock.lebarock_desktop.data.session.SessionHolder
 import com.lebarock.lebarock_desktop.ui.check.CheckActions
 import com.lebarock.lebarock_desktop.ui.common.ScreenModel
 import com.lebarock.lebarock_desktop.ui.common.UiState
+import com.lebarock.lebarock_desktop.ui.idle.IdleMonitor
+import com.lebarock.lebarock_desktop.ui.payment.PaymentFlow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -23,6 +25,8 @@ enum class OrderFilter(val api: String?, val label: String) {
     PAID("paid", "Payées"),
     CREDIT("payment_due", "À crédit"),
     CANCELED("canceled", "Annulées"),
+    /** D5: what is still to pay, whatever its day — billed checks and credits (web « Paiements dus »). Encaisser only. */
+    TO_PAY(null, "À encaisser"),
 }
 
 fun statusLabel(status: String): String = when (status) {
@@ -55,14 +59,17 @@ fun kotLabel(status: String?): String = when (status) {
 class OrdersModel(
     private val orders: OrdersRepository,
     private val sessions: SessionHolder,
+    idle: IdleMonitor,
     initialMessage: String?,
     private val onNewRound: (Long) -> Unit,
+    /** D5: opened from Accueil « Encaisser »: the checks to pay first (Facturées). */
+    initialFilter: OrderFilter = OrderFilter.ALL,
 ) : ScreenModel() {
 
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages = messageChannel.receiveAsFlow()
 
-    var filter by mutableStateOf(OrderFilter.ALL)
+    var filter by mutableStateOf(initialFilter)
         private set
     var list by mutableStateOf<UiState<OrdersResponse>>(UiState.Loading)
         private set
@@ -105,6 +112,26 @@ class OrdersModel(
         },
     )
 
+    /** D5: « Encaisser » (web: on a billed check, or one on credit), the web's payment window. */
+    val payment = PaymentFlow(orders, idle, scope) { _, _, message ->
+        message?.let { messageChannel.trySend(it) }
+        refresh()
+    }
+
+    /** The web shows « Encaisser » on a billed check and on one put on credit (paid later). */
+    fun canPay(order: OrderDetailDto): Boolean =
+        rights?.takePayment == true && (order.status == "billed" || order.status == "payment_due")
+
+    fun pay() {
+        val order = current ?: return
+        if (busy || !canPay(order)) return
+        payment.open(order.id, order.orderNumber)
+    }
+
+    override fun onDispose() {
+        payment.dispose()
+    }
+
     init {
         initialMessage?.let { messageChannel.trySend(it) }
         refresh()
@@ -119,7 +146,7 @@ class OrdersModel(
         val keep = list is UiState.Success
         if (!keep) list = UiState.Loading
         scope.launch {
-            orders.orders(filter.api)
+            orders.orders(filter.api, toPay = filter == OrderFilter.TO_PAY)
                 .onSuccess { list = UiState.Success(it) }
                 .onFailure { if (!keep) list = UiState.Error(it.message ?: "Liste indisponible.", (it as? ApiFailure)?.hint) else messageChannel.trySend(it.message ?: "Liste indisponible.") }
         }

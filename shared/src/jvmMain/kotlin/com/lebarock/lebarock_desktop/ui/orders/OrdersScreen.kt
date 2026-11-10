@@ -105,7 +105,7 @@ fun OrdersScreen(model: OrdersModel, onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            AppTopBar("Commandes", subtitle = "Les commandes du jour", onBack = onBack) {
+            AppTopBar("Commandes", subtitle = if (model.filter == OrderFilter.TO_PAY) "Les tickets à encaisser, tous les jours" else "Les commandes du jour", onBack = onBack) {
                 AppButton("Actualiser", model::refresh, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Refresh)
             }
         },
@@ -141,7 +141,7 @@ private fun OrderList(model: OrdersModel, modifier: Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Dimens.sm)) {
         val counts = (model.list as? UiState.Success)?.data?.counts
         FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.s), verticalArrangement = Arrangement.spacedBy(Dimens.s)) {
-            OrderFilter.entries.forEach { f ->
+            OrderFilter.entries.filter { it != OrderFilter.TO_PAY || model.rights?.takePayment == true }.forEach { f ->
                 val count = when (f) {
                     OrderFilter.ALL -> counts?.all
                     OrderFilter.RUNNING -> counts?.kot
@@ -149,6 +149,7 @@ private fun OrderList(model: OrdersModel, modifier: Modifier) {
                     OrderFilter.PAID -> counts?.paid
                     OrderFilter.CREDIT -> counts?.paymentDue
                     OrderFilter.CANCELED -> counts?.canceled
+                    OrderFilter.TO_PAY -> counts?.toPay
                 }
                 FilterChip(f.label, count, selected = model.filter == f) { model.chooseFilter(f) }
             }
@@ -160,7 +161,11 @@ private fun OrderList(model: OrdersModel, modifier: Modifier) {
                 is UiState.Success -> if (state.data.data.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
-                            if (model.filter == OrderFilter.ALL) "Aucune commande aujourd'hui." else "Aucune commande « ${model.filter.label} » aujourd'hui.",
+                            when (model.filter) {
+                                OrderFilter.ALL -> "Aucune commande aujourd'hui."
+                                OrderFilter.TO_PAY -> "Aucun ticket à encaisser."
+                                else -> "Aucune commande « ${model.filter.label} » aujourd'hui."
+                            },
                             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -441,7 +446,7 @@ private fun ActionBar(model: OrdersModel, order: OrderDetailDto) {
             AppButton("Addition et impression", { model.bill(true) }, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Print, enabled = !model.busy)
         }
         if (!running && order.status != "canceled") AppButton("Réimprimer", model::reprint, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Print, loading = model.busy)
-        if (open && rights?.takePayment == true) AppButton("Encaisser (étape D5)", {}, kind = ButtonKind.SECONDARY, icon = Icons.Outlined.Payments, enabled = false)
+        if (model.canPay(order)) AppButton("Encaisser", model::pay, icon = Icons.Outlined.Payments, enabled = !model.busy && !model.check.busy)
         val more = model.check.actions(order).filter { it != CheckAction.CANCEL }
         CheckActionsButton(more, enabled = !model.busy && !model.check.busy, onPick = { model.check.open(it, order) })
         if (CheckAction.CANCEL in model.check.actions(order)) {
@@ -456,6 +461,7 @@ private fun ActionBar(model: OrdersModel, order: OrderDetailDto) {
 @Composable
 private fun OrderDialogs(model: OrdersModel) {
     CheckDialogs(model.check, model.currency)
+    com.lebarock.lebarock_desktop.ui.payment.PaymentWindow(model.payment)
 
     model.printProblem?.let { message ->
         AppDialog("Ticket non imprimé", onDismiss = model::closePrintProblem, actions = { AppButton("Compris", model::closePrintProblem) }) {
@@ -471,8 +477,15 @@ private fun OrderDialogs(model: OrdersModel) {
 }
 
 private val hourMinute = DateTimeFormatter.ofPattern("HH:mm")
+private val dayHourMinute = DateTimeFormatter.ofPattern("dd/MM HH:mm")
 
-/** The caisse sends UTC (ISO 8601); the counter PC shows its own local time. */
+/**
+ * The caisse sends UTC (ISO 8601); the counter PC shows its own local time — with the day when it is not today
+ * (« À encaisser » lists checks of every day).
+ */
 internal fun timeOf(iso: String?): String? = iso?.let {
-    runCatching { OffsetDateTime.parse(it).atZoneSameInstant(ZoneId.systemDefault()).format(hourMinute) }.getOrNull()
+    runCatching {
+        val local = OffsetDateTime.parse(it).atZoneSameInstant(ZoneId.systemDefault())
+        local.format(if (local.toLocalDate() == java.time.LocalDate.now()) hourMinute else dayHourMinute)
+    }.getOrNull()
 }

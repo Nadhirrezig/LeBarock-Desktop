@@ -46,6 +46,20 @@ data class CartLine(
     )
 }
 
+/** The web POS's « Remise » (`discountType` + `discountValue`): a fixed amount, or a percent of the sub-total. */
+data class Discount(val type: String, val value: Double) {
+    val isPercent: Boolean get() = type == PERCENT
+
+    /** Percent of the sub-total, or the fixed amount capped at it (`Pos::calculateTotal`). */
+    fun amountOn(subTotal: Double): Double =
+        if (isPercent) CartMath.round2(subTotal * value / 100.0) else CartMath.round2(minOf(value, subTotal))
+
+    companion object {
+        const val FIXED = "fixed"
+        const val PERCENT = "percent"
+    }
+}
+
 data class ChargeLine(val charge: ChargeDto, val amount: Double)
 data class TaxLine(val tax: TaxDto, val amount: Double)
 
@@ -57,6 +71,8 @@ data class CartTotals(
     val charges: List<ChargeLine>,
     val taxes: List<TaxLine>,
     val total: Double,
+    /** The cart's « Remise » (0 without one). */
+    val discount: Double = 0.0,
 )
 
 /** The web POS's arithmetic (`Pos::calculateTotal`), kept identical so both screens show the same total. */
@@ -69,20 +85,22 @@ object CartMath {
         all.filter { type.api in it.orderTypes && it.id !in removed }
 
     /**
-     * subtotal = Σ lines (each to 2 decimals); taxes on the total after discount (no discount
-     * before D5); charges (percent of that total, or fixed) only when the cart has lines.
+     * subtotal = Σ lines (each to 2 decimals); the discount (percent of the subtotal, or fixed capped at it,
+     * only with lines); taxes on the total after discount; charges (percent of that total, or fixed) only when
+     * the cart has lines.
      */
-    fun totals(lines: List<CartLine>, taxes: List<TaxDto>, charges: List<ChargeDto>): CartTotals {
+    fun totals(lines: List<CartLine>, taxes: List<TaxDto>, charges: List<ChargeDto>, discount: Discount? = null): CartTotals {
         val subTotal = round2(lines.sumOf { it.amount })
-        val discounted = subTotal
+        val off = if (discount == null || discount.value <= 0.0 || lines.isEmpty()) 0.0 else discount.amountOn(subTotal)
+        val discounted = round2(subTotal - off)
         val taxLines = taxes.map { TaxLine(it, round2(it.percent / 100.0 * discounted)) }
         val chargeLines = if (lines.isEmpty()) {
             emptyList()
         } else {
             charges.map { ChargeLine(it, round2(if (it.isPercent) discounted * it.value / 100.0 else it.value)) }
         }
-        val total = round2(subTotal + taxLines.sumOf { it.amount } + chargeLines.sumOf { it.amount })
-        return CartTotals(lines.size, subTotal, chargeLines, taxLines, total)
+        val total = round2(discounted + taxLines.sumOf { it.amount } + chargeLines.sumOf { it.amount })
+        return CartTotals(lines.size, subTotal, chargeLines, taxLines, total, off)
     }
 }
 

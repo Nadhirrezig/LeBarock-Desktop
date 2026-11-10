@@ -143,6 +143,8 @@ data class AbilitiesDto(
     @SerialName("give_credit") val giveCredit: Boolean? = null,
     @SerialName("assign_waiter") val assignWaiter: Boolean? = null,
     @SerialName("create_expense") val createExpense: Boolean? = null,
+    // D6: the day's expenses (« Voir » or « Ajouter une dépense »).
+    @SerialName("show_expense") val showExpense: Boolean? = null,
     @SerialName("manage_settings") val manageSettings: Boolean? = null,
     // D4: « Mettre à jour la commande » alone (a check's operations); null from an older caisse.
     @SerialName("update_order") val updateOrder: Boolean? = null,

@@ -101,6 +101,11 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   (Réglages → « Impression des tickets »), the window then shows the change and « Réimprimer »; « Encaisser » from **every
   entry**: the POS (« Encaisser Ticket »), Commandes (« Encaisser » on a billed or on-credit check, as the web), Accueil
   (« À encaisser »: the checks still to pay, every day) and the floor (an occupied table opens the POS on its check).
+- **D6 (client, 2026-11-10):** « Caisse » = **the web's Caisse page + the list of past X / Z**, always on the account's
+  own Caisse (open with a float, cash in / out / safe drop, figures and movements, X, Z, the stock panel with « Envoyer la
+  demande au stock » after the Z); the Z is **counted by notes and coins like the web** (the values of Settings); the
+  expenses are **the web's form + the day's list** (no receipt file; edit / delete stay on the web); **every action that
+  moves money or closes the session asks « Confirmer »**, like the web. The Z's approval stays on the web.
 - **Window sizes (client, 2026-11-08):** the counter PC stays at **100 %**. The 125 % size is still checked as the
   responsive case ("not a bug, it is how the responsiveness should act"); 100 % is the reference.
 
@@ -342,6 +347,47 @@ buttons 48 dp, spacing from `Dimens`. 76 desktop tests.
   value field was squeezed, choice rows sat off the left edge, the reprint said its result twice; on the caisse the
   ticket's « Remise (1%) » and the checks of earlier days (`to_pay`).
 
+## How D6 is built (2026-11-10)
+
+- **Data:** `data/remote/CashDtos.kt` (state, session, KPIs, movements, reports with their `ticket` and stock part, offline
+  warnings, expenses), `AltosApi` (`/cash-register…`, `/expenses`), `data/CashRegisterRepository` (open, movement, X, Z,
+  reports, reprint, stock request, expenses; X / Z / reprint carry `print_target` from Réglages), `data/PrintOutcomes`
+  (where a ticket went — shared with `OrdersRepository`), `Rights.showExpense`.
+- **`pos/CashCount.kt`:** `CashCount` (the Z's count by value: − / +, typed numbers, total, difference with the cash
+  expected, only the counted values sent), `parseAmount` (« 12,5 » or « 12.5 »), `CounterDate` (« 10/11/2026 » ⇄
+  « 2026-11-10 »).
+- **`ui/cash/CashRegisterModel` + `CashRegisterScreen`** (Accueil « Caisse », `Screen.CashRegister`): tabs Session /
+  Rapports X / Z / Dépenses (with the expense rights).
+  - Session: offline warnings (devices with pending actions, payments waiting for a session); no session → « Ouvrir la
+    caisse », or « La session … attend sa validation » with who closed it and where it is approved; open session → its code,
+    who opened it, « Espèces attendues » large, Fond / Ventes espèces / Entrées / Sorties / Dépôts au coffre /
+    Remboursements, « Entrée d'espèces », « Sortie d'espèces », « Dépôt au coffre » (Utiliser la caisse), « Rapport X »,
+    « Fermer la caisse (Z) »; the drawer's movements on the right (French labels, reason or order, who, ± amount).
+  - Windows: amount (and reason) → « Continuer » (or Enter) → the summary → « Confirmer »; « Retour » goes back to the
+    fields; the caisse's refusal stays in the window. Z: expected / counted / difference (green when equal, red otherwise),
+    one line per value with − / number / +, a note, offline warnings, then « Fermer la session ».
+  - After an X or a Z: « Rapport imprimé / non imprimé » with where or why, the Z's expected / counted / difference, its
+    stock part (lines: sold, left, to refill; the stock's message when not linked) with « Envoyer la demande au stock » /
+    « Plus tard », and the ticket as it prints (`ReceiptRenderer` 48 columns, fixed-width font); « Réimprimer ».
+  - Rapports X / Z: Tous / X / Z, this Caisse's reports (type, number, time, who, session, « à valider », total), the
+    chosen one's ticket and « Réimprimer ».
+  - Dépenses: Titre, Catégorie, Montant, Date (jj/mm/aaaa, today), Payée / En attente, Mode de paiement (« Payée en
+    espèces : sortie du tiroir de cette caisse. »), Description → « Enregistrer la dépense » (the category and method kept for
+    the next one); the day's list with its total and « sortie du tiroir ».
+  - The idle lock is held while a window is open.
+- **Fixed on the way:** an X / Z ticket printed « Ticket #RAPPORT X » (since D2: `ReceiptRenderer` put « Ticket # » before
+  any number); now only a plain order number gets it.
+- Tests: 90 (+ `CashRegisterTest` 5: count by value and difference, amounts and dates, the session calls and their bodies,
+  the Z's count sent and its ticket printed here without « Ticket # », the stock request, the expense form's fields;
+  `RightsAndTilesTest.d6_brings_the_cash_register`).
+- Checked end to end (2026-11-10) on the packaged app with the local caisse (count values 50 / 20 / 10 / 5 / 2 / 1 DT, a
+  stand-in Ethernet printer) at 1366 × 768: cash in 20 DT with its confirmation; X printed and shown; Z counted 5 × 50 +
+  20 + 10 = 280.000 against 280.100 (−0.100), printed « RAPPORT Z N°1 », the session waiting for its approval; approved on
+  the caisse → open with a 100 DT float → X; a 15 DT cash expense → expected 85 DT and a « Sortie d'espèces »; the past X / Z
+  with their tickets. Fixed by running it: two movement buttons cut by their icons, the report window too tall at 768 px,
+  Enter did not go to the next step, the ticket preview's last column cut. Not checked here: a Z with the stock on (covered
+  by the tests), a real Windows screen and printer.
+
 ## Roadmap — step 4 (review approved 2026-11-08; ~17.5 days)
 
 | Step | Caisse | AltosPOS desktop | Effort | Status |
@@ -351,7 +397,7 @@ buttons 48 dp, spacing from `Dimens`. 76 desktop tests.
 | D3 | POS context, waiter right, charge taken off, cancel like the web, bill date | POS (sections in Tri order, search, web cart always visible, table picker + à emporter, send, add round, bill, waiting stock / force) and Commandes | ~3 d | [x] built 2026-11-08, client: "proceed with D4" |
 | D4 | Table and check operations; table details | Tables with every operation | ~3.5 d | [x] built 2026-11-08, client to test |
 | D5 | Discount endpoint; checks to pay of every day | Encaisser: cash + change, Carte (TPE), À crédit, split, tip, discount, receipt | ~2.5 d | [x] built 2026-11-10, client to test |
-| D6 | Cash register and expense endpoints | Caisse: open with float, cash in / out / safe drop, X, Z with count, stock panel + "Envoyer la demande au stock", dépenses | ~3.5 d | [ ] |
+| D6 | Cash register and expense endpoints | Caisse: open with float, cash in / out / safe drop, X, Z with count, stock panel + "Envoyer la demande au stock", dépenses | ~3.5 d | [x] built 2026-11-10, client to test |
 | D7 | CLAUDE.md | CLAUDE.md, release MSI, branches | ~0.5 d | [ ] |
 
 Later (own step): offline mode on `/api/sync/*` (`kind: "desktop"`), copying the handheld's offline code (Room KMP,
@@ -407,3 +453,7 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
   printed by itself; « Encaisser » from the POS, Commandes, Accueil and the floor — "follow the web logic"). Built (see
   "How D5 is built"); caisse part in its `CLAUDE.md`. 85 desktop tests; caisse suite 365 passed. Next: the client tests D5
   on the counter PC; then D6 (Caisse: cash register, X / Z, expenses).
+- 2026-11-10 — D6 asked first (client: the web's Caisse page + past X / Z; Z counted by notes and coins; expenses with the
+  web's form + the day's list; « Confirmer » like the web). Built (see "How D6 is built"); caisse part in its `CLAUDE.md`
+  (with two questions: the web's Caisse page in English, millimes in the count). 90 desktop tests; caisse 370. Next: the
+  client tests D6 on the counter PC; then D7 (wrap-up, release MSI).

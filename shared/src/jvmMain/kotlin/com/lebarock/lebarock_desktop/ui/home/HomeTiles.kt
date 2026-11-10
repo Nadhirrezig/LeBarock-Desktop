@@ -15,7 +15,7 @@ enum class Section(
     TABLES("Tables / salle", "Plan de salle : ouvrir, changer de table, fusionner, séparer", needsCaisse = false, comesIn = null),
     ORDERS("Commandes", "Les commandes du jour : détail, réimpression, annulation", needsCaisse = false, comesIn = null),
     PAYMENT("Encaisser", "Les tickets à régler : espèces, carte, à crédit, partage, pourboire", needsCaisse = true, comesIn = null),
-    CASH_REGISTER("Caisse", "Ouverture avec fond, X, Z, demande au stock, dépenses", needsCaisse = true, comesIn = "D6"),
+    CASH_REGISTER("Caisse", "Ouverture avec fond, X, Z, demande au stock, dépenses", needsCaisse = true, comesIn = null),
     SETTINGS("Réglages", "Serveur, certificat, session, application", needsCaisse = false, comesIn = null),
     ;
 

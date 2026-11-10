@@ -60,6 +60,7 @@ class OrdersRepository(
     private val json: Json,
 ) {
     private val target: PrintTarget get() = settings.current.printer.target
+    private val outcomes = PrintOutcomes(printer, json)
 
     val currency: CurrencyInfo get() = settings.current.currency
 
@@ -219,27 +220,8 @@ class OrdersRepository(
         CheckChange(envelope.data ?: throw unexpected(), envelope.message ?: "Enregistré.")
     }
 
-    /**
-     * The ticket's fate: « Sur cet appareil » → the caisse sent its content and this PC prints it;
-     * « Imprimante de la caisse » → what the caisse did with it.
-     */
-    private suspend fun outcome(envelope: Envelope<*>): PrintOutcome? {
-        envelope.print?.let { instruction ->
-            val payload = runCatching { json.decodeFromJsonElement(ReceiptPayload.serializer(), instruction.receipt) }.getOrElse {
-                return PrintOutcome(false, "Le ticket reçu de la caisse est illisible : il n'a pas été imprimé.")
-            }
-            return printer.printReceipt(payload).fold(
-                onSuccess = { PrintOutcome(true, it) },
-                onFailure = { PrintOutcome(false, it.message ?: "Le ticket n'a pas été imprimé.") },
-            )
-        }
-        val result = envelope.printResult ?: return null
-        return when (result.status) {
-            "printed", "queued" -> PrintOutcome(true, result.message ?: "Ticket envoyé à l'imprimante de la caisse.")
-            "failed" -> PrintOutcome(false, result.message ?: "Le ticket n'a pas été imprimé.")
-            else -> PrintOutcome(false, "La caisse n'a pas préparé le ticket pour ce poste.")
-        }
-    }
+    /** Where the ticket went (« Sur cet appareil »: printed here; « Imprimante de la caisse »: what the caisse did). */
+    private suspend fun outcome(envelope: Envelope<*>): PrintOutcome? = outcomes.of(envelope)
 
     private fun unexpected() = ApiFailure("Réponse inattendue de la caisse.", FailureKind.NOT_A_CAISSE)
 }

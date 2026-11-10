@@ -25,6 +25,7 @@ class AppContainer(dataDir: File = AppInfo.dataDir) {
     val ticketPrinter = TicketPrinter(settings)
     val agentClient = AgentClient { api.agentHttp() }
     val orders = com.lebarock.lebarock_desktop.data.OrdersRepository(repository, settings, ticketPrinter, api.json)
+    val cashRegister = com.lebarock.lebarock_desktop.data.CashRegisterRepository(repository, settings, ticketPrinter, api.json)
     val itemImages = com.lebarock.lebarock_desktop.ui.pos.ItemImages(http = { api.images() }, baseUrl = { settings.current.server.baseUrl })
 
     /** Ask the window to end the session and show the sign-in (window closed to the tray). */

@@ -24,6 +24,8 @@ data class Rights(
     val giveCredit: Boolean = false,
     val assignWaiter: Boolean = false,
     val createExpense: Boolean = false,
+    /** D6: the day's expenses (an account that adds them sees them too). */
+    val showExpense: Boolean = false,
     val manageSettings: Boolean = false,
     /** « Mettre à jour la commande »: the check's operations (table, merge, split, customer, charges, Vérifié). */
     val updateOrder: Boolean = false,
@@ -52,6 +54,7 @@ data class Rights(
                 giveCredit = a.giveCredit ?: false,
                 assignWaiter = a.assignWaiter ?: false,
                 createExpense = a.createExpense ?: false,
+                showExpense = a.showExpense ?: (a.createExpense ?: false),
                 manageSettings = a.manageSettings ?: false,
                 updateOrder = a.updateOrder ?: a.orders,
             )

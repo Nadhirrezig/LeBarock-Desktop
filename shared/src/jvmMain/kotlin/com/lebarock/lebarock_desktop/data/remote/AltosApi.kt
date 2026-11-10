@@ -144,6 +144,41 @@ interface AltosApi {
     @POST("api/mobile/orders/{id}/tip")
     suspend fun tip(@Path("id") id: Long, @Body body: TipRequest): Envelope<TipResultDto>
 
+    // ---- D6: the account's Caisse and the expenses ----
+
+    @GET("api/mobile/cash-register")
+    suspend fun cashRegister(): Envelope<CashRegisterStateDto>
+
+    @POST("api/mobile/cash-register/open")
+    suspend fun openSession(@Body body: OpenSessionRequest): Envelope<CashRegisterStateDto>
+
+    @POST("api/mobile/cash-register/movements")
+    suspend fun cashMovement(@Body body: CashMovementRequest): Envelope<CashRegisterStateDto>
+
+    @POST("api/mobile/cash-register/x")
+    suspend fun xReport(@Body body: PrintTargetRequest): Envelope<CashReportDto>
+
+    @POST("api/mobile/cash-register/close")
+    suspend fun closeSession(@Body body: CloseSessionRequest): Envelope<CashReportDto>
+
+    @GET("api/mobile/cash-register/reports")
+    suspend fun cashReports(@Query("type") type: String? = null): Envelope<List<CashReportDto>>
+
+    @GET("api/mobile/cash-register/reports/{id}")
+    suspend fun cashReport(@Path("id") id: Long): Envelope<CashReportDto>
+
+    @POST("api/mobile/cash-register/reports/{id}/print")
+    suspend fun printCashReport(@Path("id") id: Long, @Body body: PrintTargetRequest): Envelope<CashReportDto>
+
+    @POST("api/mobile/cash-register/reports/{id}/stock-request")
+    suspend fun stockRequest(@Path("id") id: Long): Envelope<kotlinx.serialization.json.JsonObject?>
+
+    @GET("api/mobile/expenses")
+    suspend fun expenses(@Query("date") date: String? = null): ExpensesResponse
+
+    @POST("api/mobile/expenses")
+    suspend fun addExpense(@Body body: ExpenseRequest): Envelope<ExpenseDto>
+
     /** « Remise » on an open check (D5, « Appliquer une remise »). */
     @POST("api/mobile/orders/{id}/discount")
     suspend fun setDiscount(@Path("id") id: Long, @Body body: DiscountRequest): Envelope<OrderDetailDto>

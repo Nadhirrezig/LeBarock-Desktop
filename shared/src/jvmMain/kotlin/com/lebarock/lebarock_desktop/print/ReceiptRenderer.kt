@@ -34,7 +34,13 @@ class ReceiptRenderer(private val width: Int = 48) {
         ops += separator()
 
         // Number + date on one line when they fit; then the "Label: value" details.
-        val orderNo = if (r.order.number.isBlank()) "" else "Ticket #${r.order.number}"
+        // An order's number reads « Ticket #42 »; an X / Z comes titled (« RAPPORT X », « RAPPORT Z N°3 »): kept as is.
+        val number = r.order.number.trim()
+        val orderNo = when {
+            number.isBlank() -> ""
+            number.all { it.isDigit() } -> "Ticket #$number"
+            else -> number
+        }
         val date = r.order.dateTime.orEmpty()
         when {
             orderNo.isEmpty() && date.isEmpty() -> Unit

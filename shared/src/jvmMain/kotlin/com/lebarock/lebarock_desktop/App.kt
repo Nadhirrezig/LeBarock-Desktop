@@ -143,6 +143,7 @@ fun App(container: AppContainer) {
                                 Section.ORDERS -> navigator.push(Screen.Orders())
                                 // D5: the checks to pay (billed), « Encaisser » on the one picked.
                                 Section.PAYMENT -> navigator.push(Screen.Orders(toPay = true))
+                                Section.CASH_REGISTER -> navigator.push(Screen.CashRegister)
                                 else -> Unit
                             }
                         }
@@ -199,6 +200,12 @@ fun App(container: AppContainer) {
                     }
                     LaunchedEffect(model) { screen.select?.let(model::select) }
                     OrdersScreen(model, onBack = navigator::back)
+                }
+                Screen.CashRegister -> {
+                    val model = rememberScreenModel(Screen.CashRegister) {
+                        com.lebarock.lebarock_desktop.ui.cash.CashRegisterModel(container.cashRegister, container.sessions, container.idle)
+                    }
+                    com.lebarock.lebarock_desktop.ui.cash.CashRegisterScreen(model, onBack = navigator::back)
                 }
             }
 

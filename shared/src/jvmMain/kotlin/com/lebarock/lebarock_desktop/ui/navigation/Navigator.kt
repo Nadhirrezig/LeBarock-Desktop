@@ -23,6 +23,9 @@ sealed interface Screen {
 
     /** Commandes; [message] to show on arrival, [select] the order to open. */
     data class Orders(val message: String? = null, val select: Long? = null, val toPay: Boolean = false) : Screen
+
+    /** D6: the account's Caisse (session, X / Z, reports, expenses). */
+    data object CashRegister : Screen
 }
 
 /** A small back stack: the counter has few screens, all inside one window. */

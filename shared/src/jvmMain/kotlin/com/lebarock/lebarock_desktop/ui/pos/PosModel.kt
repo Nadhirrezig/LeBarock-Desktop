@@ -60,8 +60,11 @@ class PosModel(
     private val sessions: SessionHolder,
     private val idle: IdleMonitor,
     private val existingOrderId: Long?,
-    /** Leave the POS (back to where it was opened from), with a message for that screen. */
-    private val onLeave: (String?) -> Unit,
+    /**
+     * Leave the POS (back to where it was opened from), with a message for that screen and the check it ended on
+     * (a merge moves it to the other table's check; null when the check is gone).
+     */
+    private val onLeave: (String?, Long?) -> Unit,
     /** D4, from the floor: a free table already chosen with its covers (nothing recorded until « Envoyer »). */
     private val startTable: TableDto? = null,
     private val startCovers: Int = 1,
@@ -156,7 +159,7 @@ class PosModel(
             existing = UiState.Success(change.order)
             messageChannel.trySend(change.message)
         },
-        onClosed = { message -> finished(message) },
+        onClosed = { message, orderId -> finished(message, orderId) },
     )
 
     init {
@@ -459,11 +462,11 @@ class PosModel(
     }
 
     /** Done with this order: a POS opened from Commandes or Tables goes back there; else a fresh POS. */
-    private fun finished(message: String) {
+    private fun finished(message: String, orderId: Long? = existingOrder?.id ?: existingOrderId) {
         if (returnsWhenDone) {
             hold?.release()
             hold = null
-            onLeave(message)
+            onLeave(message, orderId)
         } else {
             reset()
             messageChannel.trySend(message)
@@ -602,7 +605,7 @@ class PosModel(
         private set
 
     fun requestLeave() {
-        if (cart.isEmpty) onLeave(null) else leaveConfirm = true
+        if (cart.isEmpty) onLeave(null, existingOrder?.id ?: existingOrderId) else leaveConfirm = true
     }
 
     fun stayHere() {
@@ -613,6 +616,6 @@ class PosModel(
         leaveConfirm = false
         hold?.release()
         hold = null
-        onLeave(null)
+        onLeave(null, existingOrder?.id ?: existingOrderId)
     }
 }

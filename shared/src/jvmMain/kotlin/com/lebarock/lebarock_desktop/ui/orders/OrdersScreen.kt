@@ -282,6 +282,21 @@ private fun OrderDetail(model: OrdersModel, order: OrderDetailDto) {
                     val lines = order.items.filter { it.kotId == kot.id }
                     if (lines.isNotEmpty() || kot.status != "cancelled") KotGroup(model, kot, lines, currency)
                 }
+                // Lines « Séparer » moved here keep the kitchen ticket of the check they came from: shown on their own.
+                val ownKots = order.kots.map { it.id }.toSet()
+                val fromElsewhere = order.items.filter { it.kotId != null && it.kotId !in ownKots }
+                if (fromElsewhere.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Dimens.xs)) {
+                        GroupHeader("Envoyés en cuisine (séparés d'une autre commande)", null)
+                        fromElsewhere.forEach { line ->
+                            LineRow(line, currency) {
+                                if (CheckAction.canRemove(order, line, rights)) {
+                                    IconBox(Icons.Outlined.DeleteOutline, "Retirer cet article", tint = Danger, enabled = !model.check.busy, onClick = { model.check.askRemoveLine(order, line) })
+                                }
+                            }
+                        }
+                    }
+                }
                 val unsent = order.items.filter { it.kotId == null }
                 if (unsent.isNotEmpty()) {
                     val waiting = unsent.any { it.waitingForStock }

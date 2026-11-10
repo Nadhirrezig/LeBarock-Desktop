@@ -25,6 +25,8 @@ data class Rights(
     val assignWaiter: Boolean = false,
     val createExpense: Boolean = false,
     val manageSettings: Boolean = false,
+    /** « Mettre à jour la commande »: the check's operations (table, merge, split, customer, charges, Vérifié). */
+    val updateOrder: Boolean = false,
 ) {
     /** A kitchen account: the kitchen screen is the 22" screen's app, not the counter's. */
     val kitchenOnly: Boolean get() = kitchen && !orders
@@ -36,7 +38,7 @@ data class Rights(
          * the old behaviour for a caisse older than its rights.
          */
         fun of(a: AbilitiesDto?): Rights {
-            if (a == null) return Rights(orders = true, showOrders = true, takePayment = true, cancelOrder = true)
+            if (a == null) return Rights(orders = true, showOrders = true, takePayment = true, cancelOrder = true, updateOrder = true)
             return Rights(
                 kitchen = a.kitchen,
                 orders = a.orders,
@@ -51,6 +53,7 @@ data class Rights(
                 assignWaiter = a.assignWaiter ?: false,
                 createExpense = a.createExpense ?: false,
                 manageSettings = a.manageSettings ?: false,
+                updateOrder = a.updateOrder ?: a.orders,
             )
         }
     }

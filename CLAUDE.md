@@ -280,6 +280,14 @@ on the counter for management and as a backup. Kotlin + Compose Multiplatform (D
   floor, both tables free. Fixed by running it: tiles of a row had different heights, « Plus » squeezed in the order
   header at 125 %, the customer search did not take the keyboard, « Addition demandée » cut in the pick tiles.
 
+**Fixed after the D4 review (2026-11-10):** the customer form drops the picked customer once a field is typed over
+(the caisse makes a new one rather than renaming); Commandes shows a split ticket's lines (« Envoyés en cuisine
+(séparés d'une autre commande) »: they keep the original check's kitchen ticket); the POS opened from Commandes comes
+back on the check it ended on (a merge moves it; gone → nothing selected); « Plus » needs `abilities.update_order`
+(`Rights.updateOrder`, the orders right on an older caisse); the last sent line taken off reads « commande annulée »
+(`LineRemoval`); the floor keeps one read at a time (a poll skips while one runs, « Actualiser » cancels it); tile
+buttons 48 dp, spacing from `Dimens`. 76 desktop tests.
+
 ## Roadmap — step 4 (review approved 2026-11-08; ~17.5 days)
 
 | Step | Caisse | AltosPOS desktop | Effort | Status |
@@ -338,3 +346,6 @@ sync, PIN checks; Windows DPAPI instead of the Android Keystore).
 - 2026-11-08 — D4 asked first (client's answers): floor like the web; occupied table → the POS on its check, like the web;
   free table → nothing recorded until « Envoyer »; refresh every 15 s. Built (see "How D4 is built"); caisse part in its
   `CLAUDE.md`. 75 desktop tests; caisse suite 351 passed. Next: the client tests D4 on the counter PC; then D5 (Encaisser).
+- 2026-11-10 — D4 reviewed; client: "fix the issues". Fixed in the three repos (desktop part above; caisse and stock in
+  their `CLAUDE.md`). Checked on the packaged app: a split ticket lists its lines in Commandes, floor tiles. 76 desktop
+  tests; caisse 357; stock 47.

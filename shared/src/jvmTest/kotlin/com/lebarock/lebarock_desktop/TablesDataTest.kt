@@ -93,8 +93,8 @@ class TablesDataTest {
 
     // ── The check's actions ───────────────────────────────────────────────
 
-    private val waiter = Rights(orders = true, showOrders = true)
-    private val manager = Rights(orders = true, showOrders = true, takePayment = true, cancelOrder = true, assignWaiter = true)
+    private val waiter = Rights(orders = true, showOrders = true, updateOrder = true)
+    private val manager = Rights(orders = true, showOrders = true, takePayment = true, cancelOrder = true, assignWaiter = true, updateOrder = true)
 
     private fun check(status: String = "kot", type: String = "dine_in", qty: Int = 2, review: Boolean = false, charge: Boolean = false) = OrderDetailDto(
         id = 42, orderNumber = "42", orderType = type, status = status,
@@ -119,6 +119,15 @@ class TablesDataTest {
         assertEquals(listOf(CheckAction.WAITER, CheckAction.CUSTOMER, CheckAction.CANCEL), CheckAction.available(check(type = "pickup"), manager), "take-away: no table")
         assertEquals(listOf(CheckAction.CUSTOMER, CheckAction.CANCEL), CheckAction.available(check(status = "paid", charge = true), manager), "settled: its charges stay")
         assertEquals(emptyList(), CheckAction.available(check(status = "canceled"), manager))
+    }
+
+    @Test
+    fun the_check_operations_need_the_update_right_itself() {
+        // A custom role with « Créer une commande » only: the caisse refuses each operation, so none is offered.
+        val createOnly = Rights(orders = true, showOrders = true, cancelOrder = true)
+        assertEquals(listOf(CheckAction.CANCEL), CheckAction.available(check(review = true, charge = true), createOnly))
+        assertTrue(Rights.of(com.lebarock.lebarock_desktop.data.remote.AbilitiesDto(orders = true)).updateOrder, "an older caisse: the orders right")
+        assertFalse(Rights.of(com.lebarock.lebarock_desktop.data.remote.AbilitiesDto(orders = true, updateOrder = false)).updateOrder)
     }
 
     @Test
@@ -207,6 +216,13 @@ class TablesDataTest {
         val fix = server.takeRequest()
         assertEquals("/api/mobile/orders/42/payments/5/method", fix.url.encodedPath)
         assertEquals("card", Json.parseToJsonElement(fix.body!!.utf8()).jsonObject["method"]!!.jsonPrimitive.content)
+
+        server.enqueue(json("""{"status":"success","data":null,"closed":true,"cancelled":true}"""))
+        assertEquals(com.lebarock.lebarock_desktop.data.LineRemoval.CANCELLED, orders.removeItem(42, 1).getOrThrow(), "the last sent line: kept « Annulée »")
+        server.takeRequest()
+        server.enqueue(json("""{"status":"success","data":null,"closed":true,"cancelled":false}"""))
+        assertEquals(com.lebarock.lebarock_desktop.data.LineRemoval.DELETED, orders.removeItem(42, 1).getOrThrow())
+        server.takeRequest()
 
         server.enqueue(json("""{"status":"success","message":"Table 5 libérée."}"""))
         assertEquals("Table 5 libérée.", orders.releaseTable(6).getOrThrow())

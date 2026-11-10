@@ -180,7 +180,7 @@ private fun AreaHeading(area: AreaDto) {
 private fun Legend(modifier: Modifier = Modifier) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(Dimens.m), verticalAlignment = Alignment.CenterVertically) {
         listOf(FloorState.FREE to "Libre", FloorState.BUSY to "Occupée", FloorState.BILL to "Addition demandée", FloorState.RESERVED to "Réservée").forEach { (s, label) ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Dimens.s)) {
                 Box(Modifier.size(12.dp).clip(CircleShape).background(s.color))
                 Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
             }
@@ -202,12 +202,12 @@ private fun TableTile(model: TablesModel, t: TableDto, currency: CurrencyInfo, m
     val visit = t.session
     val merged = visit?.mergedInto
     // The badges sit on the tile's top edge, as on the web: room above for them.
-    Box(modifier.padding(top = 10.dp)) {
+    Box(modifier.padding(top = Dimens.sm)) {
         Column(
             Modifier.fillMaxSize().heightIn(min = 150.dp).clip(Dimens.cardShape).background(state.color)
                 .clickable { model.tap(t) }.pointerHoverIcon(PointerIcon.Hand)
                 .padding(Dimens.m),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(Dimens.s),
         ) {
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
@@ -253,15 +253,16 @@ private fun TableTile(model: TablesModel, t: TableDto, currency: CurrencyInfo, m
                 }
             }
         }
-        if (t.readyTickets > 0) Badge("Prêt ${t.readyTickets}", Color(0xFF15803D), Modifier.align(Alignment.TopStart).offset(x = 12.dp, y = (-10).dp))
-        if (t.pendingQrRounds > 0) Badge("QR ${t.pendingQrRounds}", Color(0xFFB45309), Modifier.align(Alignment.TopEnd).offset(x = (-12).dp, y = (-10).dp))
+        if (t.readyTickets > 0) Badge("Prêt ${t.readyTickets}", Color(0xFF15803D), Modifier.align(Alignment.TopStart).offset(x = Dimens.sm, y = -Dimens.sm))
+        if (t.pendingQrRounds > 0) Badge("QR ${t.pendingQrRounds}", Color(0xFFB45309), Modifier.align(Alignment.TopEnd).offset(x = -Dimens.sm, y = -Dimens.sm))
     }
 }
 
 @Composable
 private fun TileButton(text: String, onClick: () -> Unit) {
     Box(
-        Modifier.height(36.dp).clip(Dimens.shape).background(White20)
+        // A button like every other one (Dimens.control, 48 dp; client's style rule).
+        Modifier.height(Dimens.control).clip(Dimens.shape).background(White20)
             .clickable(onClick = onClick).pointerHoverIcon(PointerIcon.Hand)
             .padding(horizontal = Dimens.sm),
         contentAlignment = Alignment.Center,

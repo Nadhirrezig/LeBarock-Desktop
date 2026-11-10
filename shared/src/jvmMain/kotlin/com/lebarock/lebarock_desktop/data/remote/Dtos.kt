@@ -9,6 +9,9 @@ data class Envelope<T>(
     val status: String = "success",
     val message: String? = null,
     val data: T? = null,
+    // DELETE /orders/{id}/items/{itemId}: the last line gone, the check is closed — kept « Annulée » (cancelled).
+    val closed: Boolean? = null,
+    val cancelled: Boolean? = null,
     // The ticket the caisse hands back for print_target "device": the desktop prints it
     // itself on the counter printer (D2), as the handheld does on its Sunmi printer.
     val print: SunmiPrintDto? = null,
@@ -141,6 +144,8 @@ data class AbilitiesDto(
     @SerialName("assign_waiter") val assignWaiter: Boolean? = null,
     @SerialName("create_expense") val createExpense: Boolean? = null,
     @SerialName("manage_settings") val manageSettings: Boolean? = null,
+    // D4: « Mettre à jour la commande » alone (a check's operations); null from an older caisse.
+    @SerialName("update_order") val updateOrder: Boolean? = null,
 )
 
 @Serializable

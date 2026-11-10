@@ -11,6 +11,7 @@ import com.lebarock.lebarock_desktop.data.session.SessionHolder
 import com.lebarock.lebarock_desktop.pos.tableLabel
 import com.lebarock.lebarock_desktop.ui.common.ScreenModel
 import com.lebarock.lebarock_desktop.ui.common.UiState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -65,14 +66,22 @@ class TablesModel(
         scope.launch {
             while (true) {
                 delay(REFRESH_MILLIS)
-                refresh()
+                refresh(force = false)
             }
         }
     }
 
-    fun refresh() {
+    private var refreshing: Job? = null
+
+    /**
+     * Reads the floor. A poll ([force] false) is skipped while a read is on its way; « Actualiser » and the read
+     * after an action cancel it, so an older answer never lands after a newer one.
+     */
+    fun refresh(force: Boolean = true) {
+        if (!force && refreshing?.isActive == true) return
+        refreshing?.cancel()
         val keep = areas is UiState.Success
-        scope.launch {
+        refreshing = scope.launch {
             orders.tables()
                 .onSuccess {
                     areas = UiState.Success(it)

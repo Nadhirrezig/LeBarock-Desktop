@@ -36,6 +36,9 @@ data class PrintOutcome(val ok: Boolean, val message: String)
 /** A caisse answer and, when a ticket was asked for, its [print] outcome. */
 data class Printed<T>(val value: T, val print: PrintOutcome?)
 
+/** What taking a line off left: the check (KEPT), the check « Annulée » (CANCELLED), or nothing (DELETED). */
+enum class LineRemoval { KEPT, CANCELLED, DELETED }
+
 /** What a table / check operation answers (D4): the check as it is now, and the caisse's French message. */
 data class CheckChange(val order: OrderDetailDto, val message: String, val newOrder: NewOrderRefDto? = null)
 
@@ -109,9 +112,17 @@ class OrdersRepository(
         caisse.api().sendWaiting(orderId, SendWaitingRequest(force)).data ?: throw unexpected()
     }
 
-    /** Takes a line not sent off the check; false when it was the last one (the check is gone). */
-    suspend fun removeItem(orderId: Long, itemId: Long): Result<Boolean> = caisse.call {
-        caisse.api().removeOrderItem(orderId, itemId).data != null
+    /**
+     * Takes a line off the check (one waiting for stock, or a sent drink with « Annuler une commande »). The last
+     * line gone closes the check: kept « Annulée » when something of it was sent, deleted otherwise.
+     */
+    suspend fun removeItem(orderId: Long, itemId: Long): Result<LineRemoval> = caisse.call {
+        val answer = caisse.api().removeOrderItem(orderId, itemId)
+        when {
+            answer.data != null -> LineRemoval.KEPT
+            answer.cancelled == true -> LineRemoval.CANCELLED
+            else -> LineRemoval.DELETED
+        }
     }
 
     /**

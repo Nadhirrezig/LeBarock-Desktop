@@ -95,8 +95,12 @@ class OrdersModel(
             messageChannel.trySend(change.message)
             refreshList()
         },
-        onClosed = { message ->
+        onClosed = { message, orderId ->
             messageChannel.trySend(message)
+            if (orderId == null) {
+                selectedId = null
+                detail = null
+            }
             refresh()
         },
     )

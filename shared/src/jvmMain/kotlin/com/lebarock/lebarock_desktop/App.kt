@@ -157,11 +157,12 @@ fun App(container: AppContainer) {
                     val model = rememberScreenModel(screen) {
                         PosModel(
                             container.orders, container.sessions, container.idle, screen.orderId,
-                            onLeave = { message ->
+                            onLeave = { message, orderId ->
                                 navigator.back()
                                 when (navigator.current) {
-                                    // From Commandes: back on the same order, with what happened.
-                                    is Screen.Orders -> if (screen.orderId != null) navigator.replaceTop(Screen.Orders(message, select = screen.orderId))
+                                    // From Commandes: back on the check the POS ended on (a merge moves it to the
+                                    // other table's check; gone → nothing selected), with what happened.
+                                    is Screen.Orders -> if (screen.orderId != null) navigator.replaceTop(Screen.Orders(message, select = orderId))
                                     // From the floor: back on it (read again), with what happened.
                                     is Screen.Tables -> navigator.replaceTop(Screen.Tables(message))
                                     else -> Unit

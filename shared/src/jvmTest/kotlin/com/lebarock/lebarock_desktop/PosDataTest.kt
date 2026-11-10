@@ -256,6 +256,6 @@ class PosDataTest {
         assertEquals("Aucune imprimante pour la caisse « Caisse ».", refused.message)
 
         server.enqueue(json("""{"status":"success","data":null,"closed":true}"""))
-        assertFalse(orders.removeItem(42, 9).getOrThrow(), "the last line gone: the check is gone")
+        assertEquals(com.lebarock.lebarock_desktop.data.LineRemoval.DELETED, orders.removeItem(42, 9).getOrThrow(), "the last waiting line gone: the check is gone")
     }
 }

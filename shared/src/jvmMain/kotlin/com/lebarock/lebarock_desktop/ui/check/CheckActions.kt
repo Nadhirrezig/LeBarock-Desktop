@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.lebarock.lebarock_desktop.data.ApiFailure
 import com.lebarock.lebarock_desktop.data.CheckChange
+import com.lebarock.lebarock_desktop.data.LineRemoval
 import com.lebarock.lebarock_desktop.data.OrdersRepository
 import com.lebarock.lebarock_desktop.data.remote.AreaDto
 import com.lebarock.lebarock_desktop.data.remote.CancelReasonDto
@@ -46,7 +47,8 @@ enum class CheckAction(val label: String) {
             if (rights == null) return emptyList()
             val open = order.status == "kot" || order.status == "billed"
             val atTable = order.orderType == "dine_in" && order.table != null
-            val updates = rights.orders
+            // The caisse's routes need « Mettre à jour la commande » itself, not just « Créer une commande ».
+            val updates = rights.updateOrder
             return buildList {
                 if (updates && open && order.orderType == "dine_in") add(MOVE)
                 if (updates && open && atTable) add(MERGE)
@@ -119,7 +121,8 @@ class CheckActions(
     private val sessions: SessionHolder,
     private val scope: CoroutineScope,
     private val onChanged: (CheckChange) -> Unit,
-    private val onClosed: (String) -> Unit,
+    /** The check is done with: [orderId] still exists (cancelled, kept « Annulée ») or null when it is gone. */
+    private val onClosed: (String, Long?) -> Unit,
 ) {
     var dialog by mutableStateOf<CheckDialog?>(null)
         private set
@@ -244,9 +247,11 @@ class CheckActions(
         dialog = d.copy(form = d.form.copy(pickedId = c.id, name = c.name, phone = c.phone.orEmpty(), email = c.email.orEmpty(), search = "", results = null), error = null)
     }
 
-    fun customerName(text: String) = editCustomer { it.copy(name = text) }
-    fun customerPhone(text: String) = editCustomer { it.copy(phone = text) }
-    fun customerEmail(text: String) = editCustomer { it.copy(email = text) }
+    // Typing over a picked customer makes it someone else: the pick is dropped (the caisse then finds the
+    // customer by e-mail or phone, or makes a new one — it never renames the one picked).
+    fun customerName(text: String) = editCustomer { it.copy(name = text, pickedId = null) }
+    fun customerPhone(text: String) = editCustomer { it.copy(phone = text, pickedId = null) }
+    fun customerEmail(text: String) = editCustomer { it.copy(email = text, pickedId = null) }
 
     private fun editCustomer(change: (CustomerForm) -> CustomerForm) {
         val d = dialog as? CheckDialog.Customer ?: return
@@ -296,14 +301,14 @@ class CheckActions(
         busy = true
         scope.launch {
             orders.removeItem(d.order.id, d.line.id)
-                .onSuccess { stillOpen ->
+                .onSuccess { result ->
                     dialog = null
-                    if (stillOpen) {
-                        orders.orderDetail(d.order.id)
+                    when (result) {
+                        LineRemoval.KEPT -> orders.orderDetail(d.order.id)
                             .onSuccess { onChanged(CheckChange(it, "« ${d.line.name} » retiré de la commande.")) }
-                            .onFailure { onClosed("« ${d.line.name} » retiré de la commande.") }
-                    } else {
-                        onClosed("Plus aucun article : la commande est supprimée.")
+                            .onFailure { onClosed("« ${d.line.name} » retiré de la commande.", null) }
+                        LineRemoval.CANCELLED -> onClosed("Plus aucun article : commande #${d.order.orderNumber} annulée.", d.order.id)
+                        LineRemoval.DELETED -> onClosed("Plus aucun article : la commande est supprimée.", null)
                     }
                 }
                 .onFailure { e -> dialog = d.copy(error = e.message ?: "Action impossible.") }
@@ -347,7 +352,7 @@ class CheckActions(
             orders.cancel(d.order.id, d.form.reasonId, d.form.text)
                 .onSuccess {
                     dialog = null
-                    onClosed("Commande #${d.order.orderNumber} annulée.")
+                    onClosed("Commande #${d.order.orderNumber} annulée.", d.order.id)
                 }
                 .onFailure { e -> dialog = d.copy(error = e.message ?: "Annulation impossible.") }
             busy = false

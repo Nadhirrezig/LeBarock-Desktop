@@ -62,8 +62,12 @@ data class Rights(
     }
 }
 
-/** A signed-in account on this PC: its token (memory only, never written to disk) and what the caisse said about it. */
-data class Session(val token: String, val user: UserDto) {
+/**
+ * A signed-in account on this PC: its token (memory only, never written to disk) and what the caisse said about it.
+ * [offline]: signed in with the Caisse's offline PIN as its « Hors ligne » account (offline step 3): no token, nothing
+ * of it is sent to the caisse; orders and bills, money only with the payment PIN.
+ */
+data class Session(val token: String, val user: UserDto, val offline: Boolean = false) {
     val rights: Rights get() = Rights.of(user.abilities)
 
     /** The account's Caisse (menu, drawer, session, stock till); null = none, the caisse refuses orders and money. */
@@ -73,6 +77,28 @@ data class Session(val token: String, val user: UserDto) {
     val canSwitchCaisse: Boolean get() = user.canSwitchTerminal
 
     val roleLabel: String get() = user.roles.joinToString(", ")
+
+    companion object {
+        /**
+         * The « Hors ligne » session of [access]'s Caisse: the caisse's « Hors ligne » role (orders, the check, the bill),
+         * « Encaisser » behind the payment PIN; no cancel, no discount, no Caisse page.
+         */
+        fun offline(access: com.lebarock.lebarock_desktop.data.offline.OfflineAccess) = Session(
+            token = "",
+            user = UserDto(
+                id = access.accountId,
+                name = access.accountName.ifBlank { "Hors ligne" },
+                roles = listOf("Hors ligne"),
+                terminal = com.lebarock.lebarock_desktop.data.remote.TerminalDto(access.caisseId, access.caisseName, access.caisseMenuId.takeIf { it > 0 }),
+                abilities = com.lebarock.lebarock_desktop.data.remote.AbilitiesDto(
+                    kitchen = false, orders = true, forceSend = false, takePayment = true, cancelOrder = false,
+                    showOrders = true, cashRegister = false, useCashRegister = false, applyDiscount = false, giveCredit = false,
+                    assignWaiter = false, createExpense = false, showExpense = false, manageSettings = false, updateOrder = true,
+                ),
+            ),
+            offline = true,
+        )
+    }
 }
 
 /**
@@ -84,7 +110,9 @@ class SessionHolder {
     val session: StateFlow<Session?> = _session.asStateFlow()
 
     val current: Session? get() = _session.value
-    val token: String? get() = _session.value?.token
+
+    /** The Bearer token to send; none for a « Hors ligne » session (the caisse never sees it). */
+    val token: String? get() = _session.value?.takeIf { !it.offline }?.token
 
     fun start(session: Session) {
         _session.value = session

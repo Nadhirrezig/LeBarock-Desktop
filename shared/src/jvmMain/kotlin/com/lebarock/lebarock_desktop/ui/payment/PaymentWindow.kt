@@ -121,6 +121,16 @@ fun PaymentWindow(flow: PaymentFlow) {
             }
         }
     }
+    s.paymentPin?.let { entry ->
+        com.lebarock.lebarock_desktop.ui.offline.PinWindow(
+            title = "Code de paiement",
+            subtitle = "Hors ligne : le code du gérant ouvre les paiements de ce ticket pour 5 minutes",
+            entry = entry,
+            onChange = flow::editPaymentPin,
+            onSubmit = flow::submitPaymentPin,
+            onDismiss = flow::dismissPaymentPin,
+        )
+    }
 }
 
 // ── « Paiement complet » ─────────────────────────────────────────────────

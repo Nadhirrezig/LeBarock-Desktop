@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.material.icons.automirrored.outlined.Login
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -106,9 +107,26 @@ fun LoginScreen(
                     Text("Qui se connecte ?", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                     AppButton("Actualiser", model::refresh, kind = ButtonKind.TEXT, icon = Icons.Outlined.Refresh, loading = model.loading)
                 }
+                // Offline step 3: the caisse does not answer — the Caisse's « Hors ligne » account and its PIN.
+                if (model.caisseDown) {
+                    Banner(
+                        Tone.WARNING,
+                        "La caisse ne répond pas",
+                        detail = if (model.offlineAvailable) {
+                            "Connectez-vous hors ligne avec le code PIN de la caisse : commandes, additions et paiements (avec le code de paiement) sont envoyés à la caisse dès qu'elle répond."
+                        } else {
+                            com.lebarock.lebarock_desktop.data.offline.OfflinePins.NONE
+                        },
+                        action = if (model.offlineAvailable) {
+                            { AppButton("Connexion hors ligne", model::openOfflineSignIn, icon = Icons.Outlined.CloudOff) }
+                        } else {
+                            null
+                        },
+                    )
+                }
                 SearchField(model)
                 val error = model.listError
-                if (error != null && model.accounts.isNotEmpty()) {
+                if (error != null && model.accounts.isNotEmpty() && !model.caisseDown) {
                     Banner(
                         Tone.WARNING,
                         "Liste peut-être pas à jour : ${error.message}",
@@ -118,6 +136,7 @@ fun LoginScreen(
                 }
                 when {
                     model.accounts.isEmpty() && model.loading -> LoadingBox(label = "Lecture des comptes de la caisse…")
+                    model.accounts.isEmpty() && error != null && model.caisseDown -> Unit
                     model.accounts.isEmpty() && error != null -> ErrorBox(
                         error.message ?: "La caisse ne répond pas.",
                         error.hint,
@@ -137,6 +156,16 @@ fun LoginScreen(
     }
 
     model.dialog?.let { PinDialogView(model, it) }
+    model.offlinePin?.let { entry ->
+        com.lebarock.lebarock_desktop.ui.offline.PinWindow(
+            title = "Connexion hors ligne",
+            subtitle = "Code PIN hors ligne de la caisse",
+            entry = entry,
+            onChange = model::editOfflinePin,
+            onSubmit = model::submitOfflinePin,
+            onDismiss = model::dismissOfflineSignIn,
+        )
+    }
 }
 
 @Composable
@@ -297,7 +326,7 @@ private fun PinDialogView(model: LoginModel, d: PinDialog) {
 }
 
 @Composable
-private fun Keypad(enabled: Boolean, keyHeight: androidx.compose.ui.unit.Dp, onDigit: (Char) -> Unit, onBackspace: () -> Unit, onClear: () -> Unit) {
+internal fun Keypad(enabled: Boolean, keyHeight: androidx.compose.ui.unit.Dp, onDigit: (Char) -> Unit, onBackspace: () -> Unit, onClear: () -> Unit) {
     val rows = listOf("123", "456", "789")
     Column(verticalArrangement = Arrangement.spacedBy(Dimens.s)) {
         rows.forEach { row ->

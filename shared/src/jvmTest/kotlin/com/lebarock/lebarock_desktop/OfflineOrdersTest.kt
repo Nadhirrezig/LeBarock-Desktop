@@ -249,8 +249,7 @@ class OfflineOrdersTest {
     fun what_waits_for_the_caisse_says_so_in_french() = runBlocking<Unit> {
         offlineWithCopy()
         val refusals = listOf(
-            orders.paymentContext(812),
-            orders.pay(812, com.lebarock.lebarock_desktop.data.remote.PaymentRequest(method = "cash")),
+            orders.tip(812, 2.0, null),
             orders.cancel(812, null, "test"),
             orders.moveOrder(812, 2),
             orders.mergeOrder(812, 2),
@@ -260,9 +259,9 @@ class OfflineOrdersTest {
             orders.releaseTable(2),
             orders.customers("Sami"),
         ).map { it.exceptionOrNull() as ApiFailure }
-        assertEquals("Hors ligne : l'encaissement n'est pas possible tant que la caisse ne répond pas.", refusals[0].message)
-        assertEquals("Hors ligne : annuler une commande n'est pas possible tant que la caisse ne répond pas.", refusals[2].message)
-        assertEquals("Hors ligne : la remise n'est pas possible tant que la caisse ne répond pas.", refusals[6].message)
+        assertEquals("Hors ligne : ajouter un pourboire n'est pas possible tant que la caisse ne répond pas.", refusals[0].message)
+        assertEquals("Hors ligne : annuler une commande n'est pas possible tant que la caisse ne répond pas.", refusals[1].message)
+        assertEquals("Hors ligne : la remise n'est pas possible tant que la caisse ne répond pas.", refusals[5].message)
         assertTrue(refusals.all { it.code == OfflineOrders.OFFLINE_CODE && it.message!!.startsWith("Hors ligne : ") })
 
         // The cart's discount and a charge taken off cannot go with an order made offline.

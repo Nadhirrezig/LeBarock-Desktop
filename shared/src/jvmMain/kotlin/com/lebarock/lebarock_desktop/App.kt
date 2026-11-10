@@ -138,7 +138,14 @@ fun App(container: AppContainer) {
                 }
                 is Screen.Login -> {
                     val model = rememberScreenModel(screen to settings.server.baseUrl) {
-                        LoginModel(container.repository, screen.notice) { navigator.reset(Screen.Home) }
+                        LoginModel(
+                            container.repository, screen.notice, onSignedIn = { navigator.reset(Screen.Home) },
+                            offline = LoginModel.OfflineSignIn(
+                                caisseDown = container.connection.offline,
+                                available = container.offlinePins::signInAvailable,
+                                signIn = { pin -> container.repository.signInOffline(container.offlinePins, pin) },
+                            ),
+                        )
                     }
                     LoginScreen(
                         model,
@@ -224,6 +231,35 @@ fun App(container: AppContainer) {
                         com.lebarock.lebarock_desktop.ui.cash.CashRegisterModel(container.cashRegister, container.sessions, container.idle)
                     }
                     com.lebarock.lebarock_desktop.ui.cash.CashRegisterScreen(model, onBack = navigator::back)
+                }
+            }
+
+            // Offline step 3 (client, 2026-11-10: as on the handheld): a « Hors ligne » session, the caisse answers again
+            // and everything done offline was sent → a window, then the sign-in with one's own account.
+            val lastAnswer by container.connection.lastAnswerAt.collectAsState()
+            var offlineSince by remember { mutableStateOf(0L) }
+            LaunchedEffect(session?.offline) { offlineSince = if (session?.offline == true) System.currentTimeMillis() else 0L }
+            val caisseBack = session?.offline == true && offlineSince > 0 && lastAnswer > offlineSince &&
+                !offlineStatus.offline && offlineStatus.pending == 0 && !offlineStatus.syncing
+            if (caisseBack) {
+                com.lebarock.lebarock_desktop.ui.common.AppDialog(
+                    "La caisse répond à nouveau",
+                    onDismiss = {},
+                    dismissible = false,
+                    actions = {
+                        AppButton("Se connecter", {
+                            scope.launch {
+                                hadSession = false
+                                container.repository.logout("la caisse répond à nouveau")
+                                navigator.reset(Screen.Login())
+                            }
+                        })
+                    },
+                ) {
+                    Text(
+                        "Tout ce qui a été fait hors ligne sur ce poste lui a été envoyé. Connectez-vous avec votre compte.",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
                 }
             }
 

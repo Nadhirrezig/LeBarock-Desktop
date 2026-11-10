@@ -64,6 +64,8 @@ class OrdersRepository(
      */
     private val offline: com.lebarock.lebarock_desktop.data.offline.OfflineOrders? = null,
     private val sync: com.lebarock.lebarock_desktop.data.offline.OfflineSync? = null,
+    /** Offline step 3: the payment PIN that opens offline payments on a check. */
+    private val pins: com.lebarock.lebarock_desktop.data.offline.OfflinePins? = null,
 ) {
     private val target: PrintTarget get() = settings.current.printer.target
     private val outcomes = PrintOutcomes(printer, json)
@@ -224,19 +226,26 @@ class OrdersRepository(
     // ---- D5: Encaisser, as the web's payment window ----
 
     /** What the payment window needs: the due, the paid amount, the methods this account may use, the split's lines. */
-    suspend fun paymentContext(orderId: Long): Result<PaymentContextDto> = waits("l'encaissement") {
-        caisse.call { caisse.api().paymentContext(real(orderId)).data ?: throw unexpected() }
+    suspend fun paymentContext(orderId: Long): Result<PaymentContextDto> = offlineNow()?.paymentContext(orderId) ?: caisse.call {
+        caisse.api().paymentContext(real(orderId)).data ?: throw unexpected()
+    }
+
+    /**
+     * Offline (step 3): the manager's payment PIN typed in the payment window, checked on this PC; right, it opens
+     * payments on [orderId] for 5 minutes.
+     */
+    suspend fun unlockOfflinePayment(orderId: Long, pin: String): Result<Unit> {
+        val p = pins ?: return Result.failure(IllegalStateException(com.lebarock.lebarock_desktop.data.offline.OfflinePins.NO_PAYMENT_PIN))
+        return p.checkPaymentPin(pin).onSuccess { offline?.unlockPayments(orderId) }
     }
 
     /**
      * Records a payment (cash, card, credit, or a split in one go). The receipt prints by itself once the check is
      * settled (client, 2026-11-10), where Réglages says: its outcome is in [Printed.print] (null while it stays open).
      */
-    suspend fun pay(orderId: Long, request: PaymentRequest): Result<Printed<PaymentResultDto>> = waits("l'encaissement") {
-        caisse.call {
-            val envelope = caisse.api().pay(real(orderId), request.copy(printTarget = target.apiValue))
-            Printed(envelope.data ?: throw unexpected(), outcome(envelope))
-        }
+    suspend fun pay(orderId: Long, request: PaymentRequest): Result<Printed<PaymentResultDto>> = offlineNow()?.pay(orderId, request) ?: caisse.call {
+        val envelope = caisse.api().pay(real(orderId), request.copy(printTarget = target.apiValue))
+        Printed(envelope.data ?: throw unexpected(), outcome(envelope))
     }
 
     /** « Pourboire »: sets (or, at 0, takes off) the check's tip; the total follows. */

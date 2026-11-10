@@ -46,6 +46,13 @@ class CaisseRepository(
 ) {
 
     internal fun api(): AltosApi {
+        // A « Hors ligne » session has no account at the caisse: what is not done from this PC's copy waits.
+        if (sessions.current?.offline == true) {
+            throw ApiFailure(
+                "Session « Hors ligne » : cette action attend que la caisse réponde et qu'un compte s'y connecte.",
+                FailureKind.REFUSED, code = "offline",
+            )
+        }
         val baseUrl = settings.current.server.baseUrl
         if (baseUrl.isBlank()) throw ApiFailure("Adresse du serveur non réglée.", FailureKind.OTHER, hint = "Ouvrez Réglages → Serveur.")
         return client.apiFor(baseUrl)
@@ -133,8 +140,8 @@ class CaisseRepository(
         AppLog.info("Connexion : ${session.user.name} (#${session.user.id}), caisse ${session.caisse?.name ?: "aucune"}")
     }.onFailure { AppLog.info("Connexion refusée pour le compte #$userId : ${it.message}") }
 
-    /** Reads the account again (rights, Caisse), e.g. after the gérant changed something. */
-    suspend fun refreshSession(): Result<Session> = call {
+    /** Reads the account again (rights, Caisse), e.g. after the gérant changed something. A « Hors ligne » session stays as it is. */
+    suspend fun refreshSession(): Result<Session> = sessions.current?.takeIf { it.offline }?.let { Result.success(it) } ?: call {
         val user = api().me().data ?: throw ApiFailure("Réponse inattendue de la caisse.", FailureKind.NOT_A_CAISSE)
         sessions.updateUser(user)
         sessions.current ?: throw ApiFailure("Session expirée : reconnectez-vous.", FailureKind.SESSION_EXPIRED)
@@ -143,6 +150,11 @@ class CaisseRepository(
     /** Ends the session: the token is deleted on the caisse (best effort), then forgotten here. */
     suspend fun logout(reason: String) {
         val session = sessions.current ?: return
+        if (session.offline) {
+            sessions.clear()
+            AppLog.info("Fin de la session hors ligne (${session.user.name}) : $reason")
+            return
+        }
         runCatching { api().logout() }.onFailure { AppLog.warn("Déconnexion : la caisse n'a pas répondu (${it.message})") }
         sessions.clear()
         AppLog.info("Déconnexion de ${session.user.name} : $reason")
@@ -182,6 +194,17 @@ class CaisseRepository(
     } catch (e: Exception) {
         Result.failure(ApiFailure.from(e, settings.current.server.https))
     }
+
+    // ---- Offline step 3: the « Hors ligne » sign-in ----
+
+    /** Signs in with the Caisse's offline PIN as its « Hors ligne » account (the caisse does not answer). */
+    suspend fun signInOffline(pins: com.lebarock.lebarock_desktop.data.offline.OfflinePins, pin: String): Result<Session> =
+        pins.signIn(pin).map { Session.offline(it) }
+            .onSuccess { session ->
+                sessions.start(session)
+                AppLog.info("Connexion hors ligne : ${session.user.name} (#${session.user.id}), caisse ${session.caisse?.name}")
+            }
+            .onFailure { AppLog.info("Connexion hors ligne refusée : ${it.message}") }
 
     val settingsNow: AppSettings get() = settings.current
 }

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -95,8 +96,15 @@ fun HomeScreen(model: HomeModel, restaurantName: String, onSwitchUser: () -> Uni
                 Modifier.widthIn(max = 1200.dp).fillMaxWidth().padding(Dimens.l),
                 verticalArrangement = Arrangement.spacedBy(Dimens.l),
             ) {
-                Text("Bonjour ${s.user.name.substringBefore(' ')}", style = MaterialTheme.typography.headlineSmall)
+                // A « Hors ligne » session is the Caisse's account, not a person.
+                Text(if (s.offline) "Bonjour" else "Bonjour ${s.user.name.substringBefore(' ')}", style = MaterialTheme.typography.headlineSmall)
                 when {
+                    s.offline -> Banner(
+                        Tone.WARNING,
+                        "Session hors ligne",
+                        detail = "Commandes, additions et paiements (avec le code de paiement du gérant) sont gardés sur ce poste et " +
+                            "envoyés à la caisse dès qu'elle répond. La caisse, les remises, le crédit et l'annulation attendent son retour.",
+                    )
                     s.rights.kitchenOnly -> Banner(
                         Tone.INFO,
                         "Compte cuisine",
@@ -187,11 +195,15 @@ private fun Section.icon(): ImageVector = when (this) {
 
 @Composable
 private fun Tiles(sections: List<Section>, onOpen: (Section) -> Unit) {
+    // A scrollbar shows there is more below (125 %, or a banner above the tiles; client rule, 2026-11-08).
+    val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    Box {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 300.dp),
         horizontalArrangement = Arrangement.spacedBy(Dimens.m),
         verticalArrangement = Arrangement.spacedBy(Dimens.m),
-        contentPadding = PaddingValues(bottom = Dimens.l),
+        contentPadding = PaddingValues(bottom = Dimens.l, end = Dimens.m),
+        state = grid,
     ) {
         items(sections, key = { it.name }) { section ->
             Card(
@@ -224,6 +236,12 @@ private fun Tiles(sections: List<Section>, onOpen: (Section) -> Unit) {
                 }
             }
         }
+    }
+    androidx.compose.foundation.VerticalScrollbar(
+        androidx.compose.foundation.rememberScrollbarAdapter(grid),
+        Modifier.align(Alignment.CenterEnd).matchParentSize().wrapContentWidth(Alignment.End),
+        style = androidx.compose.foundation.LocalScrollbarStyle.current,
+    )
     }
 }
 

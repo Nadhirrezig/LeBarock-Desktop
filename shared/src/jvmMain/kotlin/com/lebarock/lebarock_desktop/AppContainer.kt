@@ -34,7 +34,9 @@ class AppContainer(dataDir: File = AppInfo.dataDir) {
     val agentClient = AgentClient { api.agentHttp() }
     /** Offline step 2: orders taken on this PC while the caisse does not answer, printed on its own printer. */
     val offlineOrders = com.lebarock.lebarock_desktop.data.offline.OfflineOrders(offlineStore, offline, sessions, ticketPrinter, api.json)
-    val orders = com.lebarock.lebarock_desktop.data.OrdersRepository(repository, settings, ticketPrinter, api.json, offlineOrders, offline)
+    /** Offline step 3: the Caisse's offline PIN (« Hors ligne » sign-in) and the payment PIN, checked on this PC. */
+    val offlinePins = com.lebarock.lebarock_desktop.data.offline.OfflinePins(offlineStore, secrets)
+    val orders = com.lebarock.lebarock_desktop.data.OrdersRepository(repository, settings, ticketPrinter, api.json, offlineOrders, offline, offlinePins)
     val cashRegister = com.lebarock.lebarock_desktop.data.CashRegisterRepository(repository, settings, ticketPrinter, api.json)
     val itemImages = com.lebarock.lebarock_desktop.ui.pos.ItemImages(
         http = { api.images() }, baseUrl = { settings.current.server.baseUrl }, offline = { connection.offline.value },

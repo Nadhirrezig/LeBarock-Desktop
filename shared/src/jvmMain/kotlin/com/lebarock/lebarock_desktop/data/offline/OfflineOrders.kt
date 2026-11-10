@@ -8,6 +8,11 @@ import com.lebarock.lebarock_desktop.data.Printed
 import com.lebarock.lebarock_desktop.data.remote.ActiveOrderDto
 import com.lebarock.lebarock_desktop.data.remote.AddItemsRequest
 import com.lebarock.lebarock_desktop.data.remote.AreaDto
+import com.lebarock.lebarock_desktop.data.remote.CaisseDto
+import com.lebarock.lebarock_desktop.data.remote.PaymentContextDto
+import com.lebarock.lebarock_desktop.data.remote.PaymentRequest
+import com.lebarock.lebarock_desktop.data.remote.PaymentResultDto
+import com.lebarock.lebarock_desktop.data.remote.SplitItemDto
 import com.lebarock.lebarock_desktop.data.remote.KotDto
 import com.lebarock.lebarock_desktop.data.remote.MenuDto
 import com.lebarock.lebarock_desktop.data.remote.MenuItemDto
@@ -31,6 +36,7 @@ import com.lebarock.lebarock_desktop.print.KitchenTicketPrint
 import com.lebarock.lebarock_desktop.print.ReceiptFooter
 import com.lebarock.lebarock_desktop.print.ReceiptItem
 import com.lebarock.lebarock_desktop.print.ReceiptOrder
+import com.lebarock.lebarock_desktop.print.ReceiptPayment
 import com.lebarock.lebarock_desktop.print.ReceiptPayload
 import com.lebarock.lebarock_desktop.print.ReceiptRestaurant
 import com.lebarock.lebarock_desktop.print.ReceiptRow
@@ -91,8 +97,10 @@ data class LocalPayment(
  *    (client, 2026-11-10: as on the handheld), sent to the caisse when it answers;
  *  - kitchen tickets always print on this PC's printer (Réglages), one per station, whatever the Automatique /
  *    Manuel setting and whatever Réglages says about bills (client, 2026-11-10); the bill prints there too.
- * Everything else waits for the caisse with a French message (client, 2026-11-10): payment (step 3), discount,
- * charges, waiter, table operations, cancel, the Caisse page.
+ *  - payments (step 3): cash with change, card, the bill divided (equal, amounts, by article), behind the manager's
+ *    payment PIN typed once per check for 5 minutes (client, 2026-11-10); the receipt prints here once settled.
+ * Everything else waits for the caisse with a French message (client, 2026-11-10): credit, tip, discount, charges,
+ * waiter, table operations, cancel, the Caisse page.
  */
 class OfflineOrders(
     private val store: OfflineStore,
@@ -122,6 +130,15 @@ class OfflineOrders(
         /** The code of every refusal made here: the screens can tell it from the caisse's own refusals. */
         const val OFFLINE_CODE = "offline"
 
+        /** The payment window asks the payment PIN when it gets this code (step 3). */
+        const val PAYMENT_PIN_REQUIRED = "payment_pin_required"
+
+        /** The payment PIN opens payments on a check for 5 minutes (client, 2026-11-10: as on the handheld). */
+        const val PAYMENT_UNLOCK_MS = 5 * 60_000L
+
+        /** Payments within a cent of the due settle it (the caisse's OrderPayments). */
+        const val TOLERANCE = 0.0101
+
         /** The id the screens use for an order taken offline: negative, never −1 (the screens' « no order »). */
         fun screenId(localId: Long): Long = -(localId + 1)
 
@@ -139,9 +156,23 @@ class OfflineOrders(
      */
     suspend fun active(): Boolean {
         val session = sessions.current ?: return false
+        // Signed in « Hors ligne »: always from here (no token to call the caisse with).
+        if (session.offline) return true
         if (session.rights.kitchenOnly) return false
         return sync.mustQueue()
     }
+
+    /** Payments opened on a check by the payment PIN, and until when. */
+    @Volatile
+    private var paymentUnlocked: Pair<Long, Long>? = null
+
+    /** The payment PIN was right: payments on [orderId] are open for [PAYMENT_UNLOCK_MS]. */
+    fun unlockPayments(orderId: Long) {
+        paymentUnlocked = orderId to (now() + PAYMENT_UNLOCK_MS)
+    }
+
+    private fun paymentsOpen(orderId: Long): Boolean =
+        paymentUnlocked?.let { (id, until) -> id == orderId && now() < until } == true
 
     fun <T> unavailable(what: String): Result<T> = Result.failure(waitsForCaisse(what))
 
@@ -319,7 +350,7 @@ class OfflineOrders(
             status = local.status,
             subTotal = totals.subTotal,
             total = if (lines.isEmpty()) base.total else totals.total,
-            items = base.items + lines.mapIndexed { i, line -> line.toItem(local, i) },
+            items = base.items + lines.map { line -> line.toItem(local, indexOf(local, line)) },
             kots = base.kots + rounds(local, lines),
             itemsCount = base.items.size + lines.size,
             offlineNumber = base.offlineNumber ?: local.offlineNumber,
@@ -349,6 +380,9 @@ class OfflineOrders(
             offlineNumber = local.offlineNumber,
         )
     }
+
+    /** A local line's place among all its order's lines: its item id stays the same whatever is shown. */
+    private fun indexOf(local: LocalOrderEntity, line: LocalLine): Int = lines(local).indexOfFirst { it.lineId == line.lineId }.coerceAtLeast(0)
 
     private fun LocalLine.toItem(local: LocalOrderEntity, index: Int) = OrderItemDto(
         id = -(local.localId * 10_000 + index + 1),
@@ -424,7 +458,9 @@ class OfflineOrders(
         val catalog = catalog()
         val order = detail(catalog, orderId) ?: refusal(NOT_FOUND)
         val outcome = when (order.status) {
-            "billed", "paid" -> printBill(catalog, order)
+            // Settled here: the receipt again, with what was paid and the change.
+            "paid" -> localFor(orderId)?.let { payments(it) }?.takeIf { it.isNotEmpty() }?.let { printReceipt(catalog, order, it) } ?: printBill(catalog, order)
+            "billed" -> printBill(catalog, order)
             else -> {
                 val local = localFor(orderId) ?: refusal("Rien à imprimer hors ligne : l'addition n'est pas encore faite.")
                 val all = lines(local)
@@ -548,6 +584,191 @@ class OfflineOrders(
         if (!print) return null
         val billed = detail(catalog, orderId) ?: order.copy(status = "billed")
         return printBill(catalog, billed)
+    }
+
+    // ---------------------------------------------------------------- payments (step 3)
+
+    /** The payment window offline: cash and card (and the bill divided), no credit, no tip; the drawer is the caisse's. */
+    suspend fun paymentContext(orderId: Long): Result<PaymentContextDto> = offline {
+        val catalog = catalog()
+        val order = detail(catalog, orderId) ?: refusal(NOT_FOUND)
+        if (order.stockWaiting != null || order.items.any { it.stockState == "waiting" }) refusal(STOCK_WAITING)
+        PaymentContextDto(
+            orderId = orderId,
+            orderNumber = order.orderNumber,
+            status = order.status,
+            total = order.total,
+            subTotal = order.subTotal,
+            discountAmount = order.discountAmount ?: 0.0,
+            tipAmount = order.tipAmount ?: 0.0,
+            discountType = order.discountType,
+            discountValue = order.discountValue,
+            amountPaid = order.amountPaid,
+            due = due(order),
+            currencyDecimals = catalog.decimals,
+            canAddTip = false,
+            cashSessionRequired = false,
+            cashSessionOpen = true,
+            caisse = CaisseDto(catalog.caisseId, catalog.caisseName),
+            paymentMethods = listOf("cash", "card"),
+            canGiveCredit = false,
+            items = order.items.map { SplitItemDto(it.id, it.name, it.quantity, OfflineCatalog.round2(it.amount / maxOf(1, it.quantity))) },
+        )
+    }
+
+    /**
+     * A payment taken offline, behind the payment PIN: cash (what was handed over, the rest is change) or card (the
+     * whole due), or the bill divided in one go. Recorded on the order here and queued (`payment.tender` /
+     * `payment.split`, authorized by the payment PIN) for the caisse, which puts it in its Caisse's cash session.
+     * The receipt prints on this PC once the order is settled.
+     */
+    suspend fun pay(orderId: Long, request: PaymentRequest): Result<Printed<PaymentResultDto>> = offline {
+        val catalog = catalog()
+        val actor = catalog.offlineAccountId ?: refusal(NOT_CONFIGURED)
+        if (!paymentsOpen(orderId)) throw ApiFailure("Code de paiement requis.", FailureKind.REFUSED, code = PAYMENT_PIN_REQUIRED)
+
+        val order = detail(catalog, orderId) ?: refusal(NOT_FOUND)
+        if (order.stockWaiting != null || order.items.any { it.stockState == "waiting" }) refusal(STOCK_WAITING)
+        val due = due(order)
+        if (due < 0.01) refusal("Cette commande est déjà réglée.")
+
+        val local = localFor(orderId) ?: baseFor(orderId)
+        val commandId = UUID.randomUUID().toString()
+        val at = now()
+        val split = request.split
+
+        // What enters the drawer per method, the change given back, and the command for the caisse.
+        val made: List<LocalPayment>
+        val data: JsonObject
+        if (split != null) {
+            if (split.type !in setOf("equal", "custom", "items")) refusal("Partage de l'addition illisible.")
+            val parts = split.splits.map { part ->
+                if (part.paymentMethod != "cash" && part.paymentMethod != "card") refusal("Hors ligne, chaque part se règle en espèces ou par carte.")
+                val amount = if (split.type == "items") {
+                    OfflineCatalog.round2(part.items.orEmpty().sumOf { it.price * it.quantity })
+                } else {
+                    OfflineCatalog.round2(part.amount ?: 0.0)
+                }
+                part to amount
+            }.filter { it.second >= 0.01 }
+            val sum = OfflineCatalog.round2(parts.sumOf { it.second })
+            if (sum < 0.01) refusal("Indiquez le montant des parts.")
+            if (sum > due + TOLERANCE) refusal("Les parts dépassent le reste à payer (${catalog.money(due, true)}).")
+            made = parts.map { (part, amount) -> LocalPayment(commandId, part.paymentMethod, amount, 0.0, split.type, at) }
+            data = buildJsonObject {
+                put("order_ref", local.ref)
+                put("type", split.type)
+                putJsonArray("parts") {
+                    parts.forEach { (part, amount) ->
+                        addJsonObject {
+                            put("method", part.paymentMethod)
+                            put("amount", amount)
+                            put("change", 0.0)
+                            if (split.type == "items") {
+                                putJsonArray("items") {
+                                    part.items.orEmpty().forEach { item ->
+                                        addJsonObject {
+                                            put("order_item_id", lineRef(local, item.orderItemId))
+                                            put("price", item.price)
+                                            put("quantity", item.quantity)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                put("authorized_by", "payment_pin")
+            }
+        } else {
+            val method = request.method
+            if (method != "cash" && method != "card") refusal("Hors ligne, le paiement se fait en espèces ou par carte (pas de paiement à crédit).")
+            val (kept, change) = if (method == "card") {
+                OfflineCatalog.round2(due) to 0.0
+            } else {
+                val tendered = OfflineCatalog.round2(request.amount ?: due)
+                if (tendered < 0.01) refusal("Indiquez un montant supérieur à zéro.")
+                val keep = OfflineCatalog.round2(minOf(tendered, due))
+                keep to OfflineCatalog.round2(tendered - keep)
+            }
+            made = listOf(LocalPayment(commandId, method, kept, change, null, at))
+            data = buildJsonObject {
+                put("order_ref", local.ref)
+                put("method", method)
+                put("amount", OfflineCatalog.round2(kept + change))
+                put("change", change)
+                put("authorized_by", "payment_pin")
+            }
+        }
+
+        val kept = OfflineCatalog.round2(made.sumOf { it.amount })
+        val change = OfflineCatalog.round2(made.sumOf { it.change })
+        val remaining = OfflineCatalog.round2(due - kept)
+        val status = if (remaining < TOLERANCE) "paid" else local.status
+        val saved = local.copy(status = status, paymentsJson = json.encodeToString(paymentsSerializer, payments(local) + made))
+        store.saveLocalOrder(saved)
+
+        try {
+            sync.enqueue(
+                if (split != null) "payment.split" else "payment.tender",
+                data, actor, "Paiement ${catalog.money(kept, true)} · ${label(saved)}", orderRef = saved.ref, id = commandId,
+            )
+        } catch (e: Exception) {
+            store.saveLocalOrder(local)
+            throw e
+        }
+        AppLog.info("Hors ligne : paiement ${catalog.money(kept, true)} (${made.joinToString { it.method }}) sur ${label(saved)} en attente d'envoi")
+
+        var print: PrintOutcome? = null
+        if (status == "paid") {
+            val settled = detail(catalog, orderId) ?: order
+            print = printReceipt(catalog, settled, payments(saved))
+        }
+
+        Printed(
+            PaymentResultDto(
+                orderId = orderId,
+                status = status,
+                total = order.total,
+                amountPaid = OfflineCatalog.round2(order.amountPaid + kept),
+                due = maxOf(0.0, remaining),
+                change = change,
+            ),
+            print,
+        )
+    }
+
+    private fun due(order: OrderDetailDto): Double = maxOf(0.0, OfflineCatalog.round2(order.total - order.amountPaid))
+
+    /** How the caisse finds a line of a split by article: its offline line id, or its own id. */
+    private fun lineRef(local: LocalOrderEntity, itemId: Long): String {
+        if (itemId >= 0) return itemId.toString()
+        val n = -itemId - 1
+        val owner = n / 10_000
+        val index = (n % 10_000).toInt()
+        val lines = if (owner == local.localId) lines(local) else emptyList()
+        return lines.getOrNull(index)?.lineId ?: itemId.toString()
+    }
+
+    /** The settled order's receipt, with what was paid and the change given. */
+    private suspend fun printReceipt(catalog: OfflineCatalog, order: OrderDetailDto, paid: List<LocalPayment>): PrintOutcome {
+        val base = receipt(catalog, order)
+        val receipt = base.copy(
+            footer = base.footer.copy(
+                payments = paid.map { p ->
+                    ReceiptPayment(
+                        amount = catalog.money(p.amount),
+                        method = if (p.method == "card") catalog.label("card", "Carte") else catalog.label("cash", "Espèces"),
+                        dateTime = catalog.billDate(p.at),
+                    )
+                },
+                change = paid.sumOf { it.change }.takeIf { it > 0 }?.let { catalog.money(it) },
+            ),
+        )
+        return printer.printReceipt(receipt).fold(
+            onSuccess = { PrintOutcome(true, "Ticket imprimé sur ce poste.") },
+            onFailure = { PrintOutcome(false, "Ticket non imprimé (${it.message}) : le paiement est enregistré.") },
+        )
     }
 
     /** The local record for an order the screens opened by its id. */

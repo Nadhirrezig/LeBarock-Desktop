@@ -380,7 +380,9 @@ class OfflineSync(
 
         val device = ensureDevice()
         val key = secrets.open(device.syncKeySealed)
-        if (session == null && key == null) return
+        // With nobody signed in, or a « Hors ligne » session (no token): the device key alone.
+        val keyAlone = session == null || session.offline
+        if (keyAlone && key == null) return
 
         val request = HeartbeatRequest(
             deviceUuid = device.uuid,
@@ -396,7 +398,7 @@ class OfflineSync(
         val data = try {
             api.heartbeat(request, key).data ?: return
         } catch (e: HttpException) {
-            if (e.code() == 401 && session == null) updateDevice { it.copy(keyRefused = true) }
+            if (e.code() == 401 && keyAlone) updateDevice { it.copy(keyRefused = true) }
             return
         }
 
@@ -414,7 +416,7 @@ class OfflineSync(
         if (after.code != before) AppLog.info("Mode hors ligne : ce poste est « Caisse PC ${after.code} » sur la caisse")
 
         if (data.syncKey != null) requestSync()
-        if (data.snapshotStale && session != null) runCatching { refreshSnapshot("static") }
+        if (data.snapshotStale && !keyAlone) runCatching { refreshSnapshot("static") }
         applyWaiting(data.waiting)
     }
 
@@ -449,7 +451,8 @@ class OfflineSync(
     suspend fun refreshSnapshot(parts: String) {
         val api = api() ?: return
         val session = sessions.current
-        if (!counter(session)) return
+        // The copy is given to an account signed in at the caisse: never to a « Hors ligne » session (no token).
+        if (!counter(session) || session?.offline == true) return
         val userId = session?.user?.id ?: return
 
         var device = ensureDevice()

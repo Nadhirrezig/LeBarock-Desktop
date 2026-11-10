@@ -26,7 +26,28 @@ class LoginModel(
     private val repository: CaisseRepository,
     val notice: String?,
     private val onSignedIn: () -> Unit,
+    /** Offline step 3: the « Hors ligne » sign-in with the Caisse's offline PIN; null = none (tests). */
+    private val offline: OfflineSignIn? = null,
 ) : ScreenModel() {
+
+    /** What the sign-in needs of the offline mode: whether the caisse answers, and the offline PIN. */
+    class OfflineSignIn(
+        val caisseDown: kotlinx.coroutines.flow.StateFlow<Boolean>,
+        val available: suspend () -> Boolean,
+        val signIn: suspend (String) -> Result<*>,
+    )
+
+    /** The caisse does not answer (the list failed to come, or the PC is « Hors ligne »). */
+    var caisseDown by mutableStateOf(offline?.caisseDown?.value == true)
+        private set
+
+    /** This PC holds the Caisse's offline PIN check: « Connexion hors ligne » can be offered. */
+    var offlineAvailable by mutableStateOf(false)
+        private set
+
+    /** The « Connexion hors ligne » PIN window; null when closed. */
+    var offlinePin by mutableStateOf<com.lebarock.lebarock_desktop.ui.offline.PinEntry?>(null)
+        private set
 
     var accounts by mutableStateOf(repository.cachedAccounts())
         private set
@@ -49,6 +70,44 @@ class LoginModel(
 
     init {
         refresh()
+        offline?.let { o ->
+            scope.launch {
+                o.caisseDown.collect { down ->
+                    caisseDown = down || listError?.unreachable == true
+                    offlineAvailable = o.available()
+                    // Back online: the list is read again (the « Hors ligne » button goes).
+                    if (!down && listError?.unreachable == true) refresh()
+                }
+            }
+        }
+    }
+
+    fun openOfflineSignIn() {
+        offlinePin = com.lebarock.lebarock_desktop.ui.offline.PinEntry()
+    }
+
+    fun editOfflinePin(entry: com.lebarock.lebarock_desktop.ui.offline.PinEntry) {
+        if (offlinePin?.busy != true) offlinePin = entry
+    }
+
+    fun dismissOfflineSignIn() {
+        if (offlinePin?.busy != true) offlinePin = null
+    }
+
+    /** « Connexion hors ligne »: the Caisse's offline PIN → signed in as its « Hors ligne » account. */
+    fun submitOfflinePin() {
+        val o = offline ?: return
+        val entry = offlinePin ?: return
+        if (entry.busy || entry.pin.length < 4) return
+        offlinePin = entry.copy(busy = true, error = null)
+        scope.launch {
+            o.signIn(entry.pin)
+                .onSuccess {
+                    offlinePin = null
+                    onSignedIn()
+                }
+                .onFailure { e -> offlinePin = entry.copy(pin = "", busy = false, error = e.message ?: "Code PIN incorrect.") }
+        }
     }
 
     fun refresh() {
@@ -61,6 +120,10 @@ class LoginModel(
                 }
                 .onFailure { listError = it as? ApiFailure ?: ApiFailure.from(it) }
             loading = false
+            offline?.let { o ->
+                caisseDown = o.caisseDown.value || listError?.unreachable == true
+                offlineAvailable = o.available()
+            }
         }
     }
 

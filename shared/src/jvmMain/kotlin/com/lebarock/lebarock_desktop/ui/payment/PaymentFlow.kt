@@ -46,6 +46,8 @@ data class PaymentState(
     val customers: UiState<List<CustomerDto>>? = null,
     val done: PaymentDone? = null,
     val reprinting: Boolean = false,
+    /** Offline (step 3): the manager's payment PIN asked before the payment goes; null when not asked. */
+    val paymentPin: com.lebarock.lebarock_desktop.ui.offline.PinEntry? = null,
 )
 
 /**
@@ -212,7 +214,42 @@ class PaymentFlow(
                         }
                     }
                 }
-                .onFailure { e -> state = state?.copy(busy = false, error = e.message ?: "Paiement refusé.") }
+                .onFailure { e ->
+                    // Offline: the payment PIN first, then the same payment again.
+                    if ((e as? ApiFailure)?.code == com.lebarock.lebarock_desktop.data.offline.OfflineOrders.PAYMENT_PIN_REQUIRED) {
+                        state = state?.copy(busy = false, paymentPin = com.lebarock.lebarock_desktop.ui.offline.PinEntry())
+                    } else {
+                        state = state?.copy(busy = false, error = e.message ?: "Paiement refusé.")
+                    }
+                }
+        }
+    }
+
+    // ---- Offline: the payment PIN (Admin / Gérant), once per check for 5 minutes ----
+
+    fun editPaymentPin(entry: com.lebarock.lebarock_desktop.ui.offline.PinEntry) {
+        val s = state ?: return
+        if (s.paymentPin?.busy != true) state = s.copy(paymentPin = entry)
+    }
+
+    fun dismissPaymentPin() {
+        val s = state ?: return
+        if (s.paymentPin?.busy != true) state = s.copy(paymentPin = null)
+    }
+
+    /** The PIN is checked on this PC; right, the waiting payment goes. */
+    fun submitPaymentPin() {
+        val s = state ?: return
+        val entry = s.paymentPin ?: return
+        if (entry.busy || entry.pin.length < 4) return
+        state = s.copy(paymentPin = entry.copy(busy = true, error = null))
+        scope.launch {
+            orders.unlockOfflinePayment(s.orderId, entry.pin)
+                .onSuccess {
+                    state = state?.copy(paymentPin = null)
+                    submit()
+                }
+                .onFailure { e -> state = state?.copy(paymentPin = entry.copy(pin = "", busy = false, error = e.message ?: "Code PIN incorrect.")) }
         }
     }
 

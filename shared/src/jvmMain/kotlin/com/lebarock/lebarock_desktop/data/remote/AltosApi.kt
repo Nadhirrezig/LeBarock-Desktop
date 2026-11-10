@@ -182,4 +182,31 @@ interface AltosApi {
     /** « Remise » on an open check (D5, « Appliquer une remise »). */
     @POST("api/mobile/orders/{id}/discount")
     suspend fun setDiscount(@Path("id") id: Long, @Body body: DiscountRequest): Envelope<OrderDetailDto>
+
+    // ---- Offline mode: the caisse's sync API (the handheld's calls) ----
+
+    /** Signed in: the account's token (a device key is issued); with nobody signed in: the device key alone. */
+    @POST("api/sync/heartbeat")
+    suspend fun heartbeat(@Body body: HeartbeatRequest, @Header("X-Sync-Key") syncKey: String?): Envelope<HeartbeatData>
+
+    /** Needs the signed-in token and the device key; 304 when the static part is unchanged. */
+    @GET("api/sync/snapshot")
+    suspend fun snapshot(
+        @Query("parts") parts: String,
+        @Header("X-Device-Uuid") deviceUuid: String,
+        @Header("X-Sync-Key") syncKey: String?,
+        @Header("If-None-Match") version: String?,
+    ): retrofit2.Response<Envelope<SnapshotData>>
+
+    /** The outbox, with the device key alone. */
+    @POST("api/sync/batch")
+    suspend fun syncBatch(
+        @Body body: SyncBatchRequest,
+        @Header("X-Device-Uuid") deviceUuid: String,
+        @Header("X-Sync-Key") syncKey: String?,
+    ): Envelope<SyncBatchData>
+
+    /** Is the caisse there (app and database)? Asked to come back online. */
+    @GET("api/sync/ping")
+    suspend fun syncPing(): SyncPingData
 }

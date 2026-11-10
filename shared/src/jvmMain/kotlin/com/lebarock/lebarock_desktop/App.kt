@@ -106,7 +106,12 @@ fun App(container: AppContainer) {
             }
         }
 
-        Box(Modifier.fillMaxSize()) {
+        // Offline mode: « Hors ligne » (or the catching up) above every screen, the sign-in included.
+        val offlineStatus by container.offline.status.collectAsState()
+
+        androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+        com.lebarock.lebarock_desktop.ui.offline.OfflineBanner(offlineStatus)
+        Box(Modifier.weight(1f).fillMaxWidth()) {
             when (val screen = navigator.current) {
                 is Screen.Settings -> {
                     val model = rememberScreenModel(screen) {
@@ -121,7 +126,12 @@ fun App(container: AppContainer) {
                             PrintingModel(container.settings, container.repository, container.ticketPrinter, container.secrets, container.agentClient, container.printAgent)
                         }
                     }
-                    SettingsScreen(model, printing, canGoBack = navigator.canGoBack, onBack = navigator::back)
+                    val offline = if (screen.firstRun) {
+                        null
+                    } else {
+                        rememberScreenModel(screen to "offline") { com.lebarock.lebarock_desktop.ui.settings.OfflineModel(container.offline, container.sessions) }
+                    }
+                    SettingsScreen(model, printing, canGoBack = navigator.canGoBack, onBack = navigator::back, offline = offline)
                 }
                 is Screen.Login -> {
                     val model = rememberScreenModel(screen to settings.server.baseUrl) {
@@ -213,6 +223,7 @@ fun App(container: AppContainer) {
             if (left != null && left in 1..IdleMonitor.WARNING_MILLIS) {
                 IdleWarning(left, onStay = container.idle::touch, modifier = Modifier.align(Alignment.BottomCenter))
             }
+        }
         }
     }
 }

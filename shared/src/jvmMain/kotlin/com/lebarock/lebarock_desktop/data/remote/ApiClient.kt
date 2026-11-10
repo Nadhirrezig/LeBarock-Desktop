@@ -18,6 +18,8 @@ import javax.net.ssl.X509TrustManager
 class ApiClient(
     private val tokenProvider: () -> String?,
     private val trustManagerFactory: () -> X509TrustManager = { TrustStore.trustManager() },
+    /** Offline mode: sees every call to the saved caisse answer or fail (`ConnectionMonitor.interceptor`). */
+    private val watch: okhttp3.Interceptor? = null,
 ) {
 
     val json = Json {
@@ -28,16 +30,20 @@ class ApiClient(
         isLenient = true
     }
 
-    @Volatile private var http: OkHttpClient = build()
+    @Volatile private var http: OkHttpClient = build(watched = true)
+
+    /** « Tester la connexion » may ask another address: its failures say nothing about the saved caisse. */
+    @Volatile private var probeHttp: OkHttpClient = build(watched = false)
     @Volatile private var cached: Pair<String, AltosApi>? = null
 
-    private fun build(): OkHttpClient {
+    private fun build(watched: Boolean): OkHttpClient {
         val trust = trustManagerFactory()
         return OkHttpClient.Builder()
             .sslSocketFactory(TrustStore.sslContext(trust).socketFactory, trust)
             .connectTimeout(6, TimeUnit.SECONDS)
             .readTimeout(25, TimeUnit.SECONDS)
             .writeTimeout(25, TimeUnit.SECONDS)
+            .apply { if (watched && watch != null) addInterceptor(watch) }
             .addInterceptor { chain ->
                 val token = tokenProvider()
                 val original = chain.request()
@@ -54,7 +60,8 @@ class ApiClient(
 
     /** After a certificate was imported or removed in Réglages. */
     fun reloadTrust() {
-        http = build()
+        http = build(watched = true)
+        probeHttp = build(watched = false)
         cached = null
         images = null // rebuilt with the new trust, on the same disk cache
     }
@@ -130,7 +137,7 @@ class ApiClient(
      */
     fun probeFor(baseUrl: String): AltosApi = Retrofit.Builder()
         .baseUrl(baseUrl)
-        .client(http.newBuilder().connectTimeout(4, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).build())
+        .client(probeHttp.newBuilder().connectTimeout(4, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).build())
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .build()
         .create(AltosApi::class.java)

@@ -29,6 +29,7 @@ kotlin {
             implementation(libs.okhttp)
             implementation(libs.okhttp.logging)
             implementation(libs.jna.platform)
+            implementation(libs.sqlite.jdbc)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

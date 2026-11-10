@@ -18,10 +18,18 @@ import java.nio.channels.FileLock
 class AppContainer(dataDir: File = AppInfo.dataDir) {
     val settings = SettingsStore(File(dataDir, "settings.json"))
     val sessions = SessionHolder()
-    val api = ApiClient(tokenProvider = { sessions.token }).apply { imageCacheDir = File(dataDir, "cache/images") }
+
+    /** Offline mode: whether the caisse answers, seen on every call to it. */
+    val connection = com.lebarock.lebarock_desktop.data.offline.ConnectionMonitor()
+    val api = ApiClient(tokenProvider = { sessions.token }, watch = connection.interceptor).apply { imageCacheDir = File(dataDir, "cache/images") }
     val repository = CaisseRepository(api, settings, sessions)
     val idle = IdleMonitor()
     val secrets = SecretBox(dataDir)
+
+    /** Offline mode: this PC's own store (`offline.db`) and what keeps it in step with the caisse, for the app's life. */
+    val offlineScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+    val offlineStore = com.lebarock.lebarock_desktop.data.offline.OfflineStore.open(File(dataDir, "offline.db"))
+    val offline = com.lebarock.lebarock_desktop.data.offline.OfflineSync(offlineStore, api, settings, sessions, secrets, connection, offlineScope)
     val ticketPrinter = TicketPrinter(settings)
     val agentClient = AgentClient { api.agentHttp() }
     val orders = com.lebarock.lebarock_desktop.data.OrdersRepository(repository, settings, ticketPrinter, api.json)

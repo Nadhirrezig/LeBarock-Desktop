@@ -60,11 +60,11 @@ import java.time.format.DateTimeFormatter
 
 /**
  * Réglages, one page (client, 2026-11-08): Serveur, Certificat, Impression des tickets,
- * Impression « Directe », Session, Application. Only the server address has an "Enregistrer"
+ * Impression « Directe », Mode hors ligne, Session, Application. Only the server address has an "Enregistrer"
  * button; every other section saves on each change and says so.
  */
 @Composable
-fun SettingsScreen(model: SettingsModel, printing: PrintingModel?, canGoBack: Boolean, onBack: () -> Unit) {
+fun SettingsScreen(model: SettingsModel, printing: PrintingModel?, canGoBack: Boolean, onBack: () -> Unit, offline: OfflineModel? = null) {
     Column(
         Modifier.fillMaxSize().onPreviewKeyEvent {
             if (it.type == KeyEventType.KeyDown && it.key == Key.Escape && canGoBack) {
@@ -94,6 +94,7 @@ fun SettingsScreen(model: SettingsModel, printing: PrintingModel?, canGoBack: Bo
                 PrintingSection(printing)
                 DirectPrintingSection(printing)
             }
+            if (offline != null) OfflineSection(offline)
             if (!model.firstRun) SessionSection(model)
             ApplicationSection(model)
         }

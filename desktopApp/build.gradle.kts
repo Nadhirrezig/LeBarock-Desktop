@@ -38,7 +38,8 @@ compose.desktop {
             // which only exists in a Windows JDK.
             // jdk.charsets: the PC858 code page of the ticket printer (IBM00858).
             // jdk.localedata: French dates ("dimanche 8 novembre"); without it the installed app writes "Sun 8 Nov".
-            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported", "jdk.charsets", "jdk.localedata")
+            // java.sql: the offline store (SQLite through JDBC).
+            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported", "jdk.charsets", "jdk.localedata", "java.sql")
             if (isWindows) modules("jdk.crypto.mscapi")
 
             windows {

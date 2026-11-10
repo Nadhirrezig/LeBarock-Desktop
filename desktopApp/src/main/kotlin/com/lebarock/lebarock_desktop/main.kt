@@ -52,6 +52,8 @@ fun main(args: Array<String>) {
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     container.printAgent.start(appScope)
+    // Offline mode: this PC says it is there, keeps its copy of the caisse and sends what waits, window open or not.
+    container.offline.start()
 
     application {
         val settings by container.settings.settings.collectAsState()

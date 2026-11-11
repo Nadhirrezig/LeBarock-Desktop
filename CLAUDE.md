@@ -202,3 +202,5 @@ USB printing through a Windows driver, tray and registry — the client's test.
   message had two brackets (fixed).
   « Code remise » built: the discount window asks the code (online and offline, store v4); 131 tests pass.
   O4d built: the tip offline (no PIN, follows the setting); 132 tests pass. O4 done; next D7.
+  Service test with 3 waiter handhelds (simulated) and this PC as « Caissier »: discount with the code, cash with
+  change, card, split; drawer and receipts right. Found: the check view had no tax line (added: `taxes`).

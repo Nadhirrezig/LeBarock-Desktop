@@ -392,6 +392,7 @@ private fun Totals(order: OrderDetailDto, currency: CurrencyInfo) {
         TotalLine("Sous-total", Money.format(order.subTotal, currency))
         order.discountAmount?.takeIf { it > 0 }?.let { TotalLine("Remise", "-" + Money.format(it, currency)) }
         order.charges.forEach { c -> TotalLine(c.name + if (c.type == "percent") " (${pct(c.value)} %)" else "", Money.format(c.amount, currency)) }
+        order.taxes.forEach { t -> TotalLine("${t.name} (${pct(t.percent)} %)", Money.format(t.amount, currency)) }
         order.tipAmount?.takeIf { it > 0 }?.let { TotalLine("Pourboire", Money.format(it, currency)) }
         TotalLine("Total", Money.format(order.total, currency), strong = true)
         if (order.amountPaid > 0) TotalLine("Payé", Money.format(order.amountPaid, currency))

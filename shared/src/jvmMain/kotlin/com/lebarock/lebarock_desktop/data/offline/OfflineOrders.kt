@@ -464,8 +464,13 @@ class OfflineOrders(
             discountAmount = totals.discount,
             total = totals.total,
             charges = o.charges.map { c -> c.copy(amount = OfflineCatalog.round2(if (c.type == "percent") base * c.value / 100 else c.value)) },
+            taxes = taxesOf(catalog, base),
         )
     }
+
+    /** The copy's taxes on [base], as the caisse shows them on a check. */
+    private fun taxesOf(catalog: OfflineCatalog, base: Double) =
+        catalog.taxes.map { com.lebarock.lebarock_desktop.data.remote.OrderTaxDto(it.name, it.percent, OfflineCatalog.round2(it.percent / 100 * base)) }
 
     private fun standalone(catalog: OfflineCatalog, local: LocalOrderEntity, lines: List<LocalLine>): OrderDetailDto {
         val totals = catalog.totals(lines.sumOf { it.amount }, null, null, 0.0, local.orderType)
@@ -490,6 +495,7 @@ class OfflineOrders(
             offlineNumber = local.offlineNumber,
             // The restaurant's charges for its type, as the caisse puts them on (O4b: one can be taken off).
             charges = catalog.chargesFor(local.orderType, totals.subTotal).map { it.copy(removable = open) },
+            taxes = taxesOf(catalog, totals.subTotal),
         )
         val changes = edits(local)
         return if (changes.isEmpty()) order else recompute(catalog, withEdits(order, changes))

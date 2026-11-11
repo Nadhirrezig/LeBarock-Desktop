@@ -349,6 +349,13 @@ data class KotDto(
 )
 
 @Serializable
+data class OrderTaxDto(
+    val name: String = "",
+    val percent: Double = 0.0,
+    val amount: Double = 0.0,
+)
+
+@Serializable
 data class OrderDetailDto(
     val id: Long,
     val uuid: String? = null,
@@ -385,6 +392,8 @@ data class OrderDetailDto(
     @SerialName("needs_review") val needsReview: Boolean = false,
     // D4: the extra charges (removable on an open check), the payments (cash / card can be corrected), the customer.
     val charges: List<OrderChargeDto> = emptyList(),
+    /** The check's taxes as the bill prints them (handheld test 2026-11-11: the VAT was missing from the view). */
+    val taxes: List<OrderTaxDto> = emptyList(),
     val payments: List<PaymentLineDto> = emptyList(),
     @SerialName("customer_info") val customerInfo: CustomerDto? = null,
 )

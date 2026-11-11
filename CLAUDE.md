@@ -87,7 +87,10 @@ Name on Windows: **AltosPOS**. Detail of each step is in git history (cleaned up
 
 - [ ] Client tests on the counter PC: D4–D6, O1–O4d, « Code remise ».
 - [ ] Deployment branch when the client says.
-- [ ] **MSI release — last.**
+- [ ] **MSI release — last, built by the client on Windows** (client, 2026-11-11): pull `claude/epic-euler-r5vcoj`,
+      `.\gradlew.bat :desktopApp:packageMsi` (Gradle fetches the Azul JDK 21, the plugin fetches WiX) →
+      `desktopApp/build/compose/binaries/main/msi/AltosPOS-1.0.0.msi`. Version from `altospos.version` (1.0.0). Check:
+      install, sign in, print, offline; a higher version installs over it. Not built in cloud sessions (Windows only).
 
 ## Open questions
 

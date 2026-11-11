@@ -55,6 +55,11 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   « Envoyer »; refresh every 15 s. Every web operation except QR approvals.
 - **Encaisser (D5):** the web's payment window; discount in the POS cart like the web; receipt printed by itself once
   settled; « Encaisser » from the POS, Commandes, Accueil (« À encaisser », every day) and the floor.
+- **« Code remise » (client, 2026-11-11):** the « Remise » window (cart and check) asks the restaurant's « Code remise »
+  each time a discount is added or changed (right « Appliquer une remise » + code; set by the Admin on the caisse,
+  Paramètres → Remises). Online the caisse checks it (`discount_code`, `/discount-code/check` for a new cart); offline
+  it is checked against the copy's sealed check (`offline_access.discount_verifier_sealed`, store v4) and the discount
+  is sent with `authorized_by: discount_code` — **no payment PIN for a discount any more**. Taking it off: no code.
 - **Caisse (D6):** the web's Caisse page + past X / Z on the account's Caisse; Z counted by value (whole numbers, the
   caisse's list) **plus « Reste (pièces) », an amount typed for the coins** (sent as `rest`; client 2026-11-10, no coin
   values); movements under the web's names (« Entrée de caisse / Sortie de caisse / Prélèvement coffre », action buttons
@@ -191,3 +196,4 @@ USB printing through a Windows driver, tray and registry — the client's test.
   O4c built: move, merge, split offline (no PIN); run end to end (order on T3, #2 moved T1 → T4, a Citronnade split to
   D1-004, T3 merged into T4; the caisse back → 4 actions applied, #2 on T4 at 19.800 as on the PC). Found: the split's
   message had two brackets (fixed).
+  « Code remise » built: the discount window asks the code (online and offline, store v4); 131 tests pass.

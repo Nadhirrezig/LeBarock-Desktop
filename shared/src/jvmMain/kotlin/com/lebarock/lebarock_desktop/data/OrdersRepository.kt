@@ -191,14 +191,14 @@ class OrdersRepository(
 
     /** « Changer de table »: the check moves to a free table (an occupied one is « Fusionner »). */
     suspend fun moveOrder(orderId: Long, tableId: Long): Result<CheckChange> =
-        waits("changer de table") { change { caisse.api().moveOrder(real(orderId), TableIdRequest(tableId)) } }
+        offlineNow()?.moveOrder(orderId, tableId) ?: change { caisse.api().moveOrder(real(orderId), TableIdRequest(tableId)) }
 
     /** « Fusionner »: this table's party joins [tableId]'s check; the answer is that check. */
     suspend fun mergeOrder(orderId: Long, tableId: Long): Result<CheckChange> =
-        waits("fusionner des tables") { change { caisse.api().mergeOrder(real(orderId), TableIdRequest(tableId)) } }
+        offlineNow()?.mergeOrder(orderId, tableId) ?: change { caisse.api().mergeOrder(real(orderId), TableIdRequest(tableId)) }
 
     /** « Séparer »: [quantities] (line id → how many) move to a new check on the same table. */
-    suspend fun splitOrder(orderId: Long, quantities: Map<Long, Int>): Result<CheckChange> = waits("séparer une commande") {
+    suspend fun splitOrder(orderId: Long, quantities: Map<Long, Int>): Result<CheckChange> = offlineNow()?.splitOrder(orderId, quantities) ?: run {
         caisse.call {
             val answer = caisse.api().splitOrder(real(orderId), SplitRequest(quantities.map { (id, qty) -> SplitLine(id, qty) }))
             CheckChange(answer.data ?: throw unexpected(), answer.message ?: "Commande séparée.", answer.newOrder)

@@ -19,7 +19,7 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   kotlinx.serialization, material-icons-extended, JNA (Windows DPAPI and registry), sqlite-jdbc (the offline store; the
   installed app needs the `java.sql` module, set in `desktopApp/build.gradle.kts`).
 - Modules: `shared` (all app code `src/jvmMain`, tests `src/jvmTest`), `desktopApp` (window, tray, installer settings).
-- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**126 tests**, 2026-11-11).
+- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**131 tests**, 2026-11-11).
 - Installer: `gradlew :desktopApp:packageMsi` **on Windows** → `desktopApp/build/compose/binaries/main/msi/AltosPOS-x.y.z.msi`.
   Raise `altospos.version` for each release (MAJOR.MINOR.BUILD); `upgradeUuid` never changes.
 - Data folder `%APPDATA%\AltosPOS` (`settings.json`, `offline.db`, `logs\`, `certs\`, `cache\images`, lock file);
@@ -84,8 +84,11 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   (`ui/offline/ManagerPin`, the « Code du gérant » window over the check's windows and the POS); shown at once
   (`local_orders.edits_json`, store v3) and sent to the caisse. A dish sent to a kitchen is not taken off and a
   discount under what was paid is refused, as online; nothing prints for the kitchen; a cancelled check's money goes
-  back when the caisse applies it.** Still waiting for the caisse: credit, tip, customer, table operations, Caisse page,
-  expenses. The caisse's `order.remove_line` is used since O4b (a sent line with no kitchen station, with its reason).
+  back when the caisse applies it.** **O4c (client, 2026-11-11): « Changer de table », « Fusionner », « Séparer »
+  offline, as online (no PIN)** — shown at once (edits `move` / `absorb` / `merged` / `split_out`; the floor frees the
+  table left and takes the one reached), one action each for the caisse; a split gets its own number « D1-008 »; a
+  table taken meanwhile is refused at the caisse (« À vérifier »). Still waiting for the caisse: credit, tip, customer,
+  « Libérer la table », Caisse page, expenses. The caisse's `order.remove_line` is used since O4b (a sent line with no kitchen station, with its reason).
 - **Not included:** cash drawer, customer display, barcode, kitchen screen, waiter notifications, QR approvals.
 
 ## How the app is organised
@@ -163,7 +166,8 @@ USB printing through a Windows driver, tray and registry — the client's test.
 - [x] **Offline O4b** check edits offline (2026-11-11) — client to test: stop the caisse, « Connexion hors ligne »,
       an order with a cart discount (« Code du gérant »), then on it: waiter, « Retirer des frais », a drink taken off
       with its reason, and cancel another check; start the caisse: same totals, check « Annulée » with its reason.
-- [ ] **Offline O4c** table operations offline (move, merge, split).
+- [x] **Offline O4c** table operations offline (2026-11-11) — client to test: stop the caisse, move a check to a free
+      table, split one line of another, merge its table into the first; start the caisse: same checks and totals.
 - [ ] **Offline O4d** tip offline. Credit, customer, Caisse page and expenses stay online (client, 2026-11-11).
 - [ ] **D7 wrap-up** after O4 (CLAUDE.md files, deployment branches), then **MSI release — last** (client, 2026-11-10).
 
@@ -184,3 +188,6 @@ USB printing through a Windows driver, tray and registry — the client's test.
   O4b built: the check's changes offline behind the manager's PIN; run end to end (cart discount 10 % + PIN, drink
   taken off « Renversé », waiter Sami, service fee removed, check #1 cancelled « Client parti » + PIN; the caisse back →
   7 actions applied, D1-002 at 5.940 as on the PC; the store upgraded v2 → v3 on the PC).
+  O4c built: move, merge, split offline (no PIN); run end to end (order on T3, #2 moved T1 → T4, a Citronnade split to
+  D1-004, T3 merged into T4; the caisse back → 4 actions applied, #2 on T4 at 19.800 as on the PC). Found: the split's
+  message had two brackets (fixed).

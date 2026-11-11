@@ -248,16 +248,14 @@ class OfflineOrdersTest {
     @Test
     fun what_waits_for_the_caisse_says_so_in_french() = runBlocking<Unit> {
         offlineWithCopy()
+        // O4c: move, merge and split work offline now (OfflineTableOpsTest).
         val refusals = listOf(
             orders.tip(812, 2.0, null),
-            orders.moveOrder(812, 2),
-            orders.mergeOrder(812, 2),
-            orders.splitOrder(812, mapOf(7001L to 1)),
             orders.releaseTable(2),
             orders.customers("Sami"),
         ).map { it.exceptionOrNull() as ApiFailure }
         assertEquals("Hors ligne : ajouter un pourboire n'est pas possible tant que la caisse ne répond pas.", refusals[0].message)
-        assertEquals("Hors ligne : changer de table n'est pas possible tant que la caisse ne répond pas.", refusals[1].message)
+        assertEquals("Hors ligne : libérer une table n'est pas possible tant que la caisse ne répond pas.", refusals[1].message)
         assertTrue(refusals.all { it.code == OfflineOrders.OFFLINE_CODE && it.message!!.startsWith("Hors ligne : ") })
 
         // O4b: cancel, discount, a line taken off and the cart's discount / charges ask the manager's PIN instead.

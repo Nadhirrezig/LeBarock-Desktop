@@ -97,7 +97,7 @@ data class LocalPayment(
 @Serializable
 data class LocalEdit(
     @SerialName("command_id") val commandId: String,
-    /** discount | cancel | waiter | remove_charge | remove_line */
+    /** discount | cancel | waiter | remove_charge | remove_line | move | absorb | merged | split_out */
     val kind: String,
     @SerialName("discount_type") val discountType: String? = null,
     @SerialName("discount_value") val discountValue: Double? = null,
@@ -108,6 +108,14 @@ data class LocalEdit(
     /** The line taken off: its id as the screens show it. */
     @SerialName("item_id") val itemId: Long? = null,
     val reason: String? = null,
+    /** O4c: the table it moved to (move). */
+    @SerialName("table_id") val tableId: Long? = null,
+    @SerialName("table_code") val tableCode: String? = null,
+    /** O4c: the lines and what was paid of a check folded into this one (absorb). */
+    val items: List<OrderItemDto>? = null,
+    val paid: Double? = null,
+    /** O4c: what left for a new check (split_out): the line's screen id → its quantity moved. */
+    val moves: Map<String, Int>? = null,
     val at: Long,
 )
 
@@ -278,8 +286,14 @@ class OfflineOrders(
                     val onTable = orders.filter { it.table?.id == table.id }
                     val order = onTable.firstOrNull()
                     val state = states[table.id]
-                    val session = state?.let { runCatching { json.parseToJsonElement(it.json).jsonObject["session"] }.getOrNull() }
+                    val copied = state?.let { runCatching { json.parseToJsonElement(it.json).jsonObject["session"] }.getOrNull() }
                         ?.let { element -> runCatching { json.decodeFromJsonElement(TableSessionDto.serializer(), element) }.getOrNull() }
+                    // O4c: the party follows its check offline — a table it left is free, one it reached is taken.
+                    val session = when {
+                        order == null && state?.status == "running" -> null
+                        order != null && copied == null -> TableSessionDto(pax = order.numberOfPax ?: 1)
+                        else -> copied
+                    }
                     TableDto(
                         id = table.id,
                         code = table.code,
@@ -345,7 +359,8 @@ class OfflineOrders(
             .map { standalone(catalog, it, lines(it)) }
 
         // Open = not settled or cancelled (the caisse's Order::OPEN_STATUSES).
-        return (merged + standalone).filter { it.status !in setOf("paid", "canceled", "payment_due") }
+        // Folded into another table's check offline (O4c): its lines show there.
+        return (merged + standalone).filter { it.status !in setOf("paid", "canceled", "payment_due", "merged") }
     }
 
     private suspend fun detail(catalog: OfflineCatalog, id: Long): OrderDetailDto? {
@@ -421,6 +436,14 @@ class OfflineOrders(
                 "remove_charge" -> o.copy(charges = o.charges.filter { it.id != e.chargeId })
                 "remove_line" -> o.copy(items = o.items.filter { it.id != e.itemId })
                 "cancel" -> o.copy(status = "canceled", cancelReason = e.reason)
+                "move" -> o.copy(table = e.tableId?.let { OrderRefDto(it, e.tableCode) })
+                "absorb" -> o.copy(items = o.items + e.items.orEmpty(), amountPaid = OfflineCatalog.round2(o.amountPaid + (e.paid ?: 0.0)))
+                "merged" -> o.copy(status = "merged")
+                "split_out" -> o.copy(items = o.items.mapNotNull { item ->
+                    val moved = e.moves?.get(item.id.toString()) ?: return@mapNotNull item
+                    val left = item.quantity - moved
+                    if (left <= 0) null else item.copy(quantity = left, amount = OfflineCatalog.round2(item.amount / item.quantity * left))
+                })
                 else -> o
             }
         }
@@ -739,8 +762,9 @@ class OfflineOrders(
         requirePin(orderId)
         val last = order.items.size == 1
         val local = localFor(orderId) ?: baseFor(orderId)
+        val ref = lineRef(local, itemId)
         change(catalog, orderId, "order.remove_line", "Article retiré · ", status = if (last) "canceled" else null,
-            data = { put("line_ref", lineRef(local, itemId)); putReason(reasonId, reasonText) },
+            data = { put("line_ref", ref); putReason(reasonId, reasonText) },
             edit = { LocalEdit(it, "remove_line", itemId = itemId, reason = reason, at = now()) })
         last
     }
@@ -811,13 +835,16 @@ class OfflineOrders(
         type: String,
         label: String,
         status: String? = null,
+        /** O4b's changes go with the manager's PIN; O4c's table operations without (as online). */
+        pin: Boolean = true,
+        adjust: (LocalOrderEntity) -> LocalOrderEntity = { it },
         data: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit,
         edit: (String) -> LocalEdit,
     ) {
         val actor = catalog.offlineAccountId ?: refusal(NOT_CONFIGURED)
         val local = localFor(orderId) ?: baseFor(orderId)
         val commandId = UUID.randomUUID().toString()
-        val saved = local.copy(
+        val saved = adjust(local).copy(
             status = status ?: local.status,
             editsJson = json.encodeToString(editsSerializer, edits(local) + edit(commandId)),
         )
@@ -826,12 +853,145 @@ class OfflineOrders(
             sync.enqueue(type, buildJsonObject {
                 put("order_ref", saved.ref)
                 data()
-                put("authorized_by", "payment_pin")
+                if (pin) put("authorized_by", "payment_pin")
             }, actor, label + label(saved), orderRef = saved.ref, id = commandId)
         } catch (e: Exception) {
             store.saveLocalOrder(local)
             throw e
         }
+    }
+
+    // ---------------------------------------------------------------- the table (O4c)
+
+    /** « Changer de table » offline (O4c, as online: no PIN): to a free table of the copy. */
+    suspend fun moveOrder(orderId: Long, tableId: Long): Result<CheckChange> = offline {
+        val catalog = catalog()
+        val order = openOrder(catalog, orderId)
+        if (order.orderType != "dine_in") refusal("Seule une commande sur place change de table.")
+        val table = catalog.table(tableId) ?: refusal("Table introuvable dans les données hors ligne de ce poste.")
+        if (order.table?.id != tableId) {
+            if (openOrders(catalog).any { it.table?.id == tableId }) {
+                refusal("La table ${table.code} a déjà un ticket en cours : utilisez « Fusionner les tables ».")
+            }
+            change(catalog, orderId, "order.move", "Changement de table · ", pin = false,
+                adjust = { it.copy(tableId = table.id, tableCode = table.code) },
+                data = { put("table_id", table.id) },
+                edit = { LocalEdit(it, "move", tableId = table.id, tableCode = table.code, at = now()) })
+        }
+        CheckChange(detail(catalog, orderId) ?: refusal(NOT_FOUND), "Commande déplacée sur la table ${table.code} (hors ligne).")
+    }
+
+    /**
+     * « Fusionner » offline (O4c): every open check of this table joins the check of [tableId] (or, when that table has
+     * none, moves there), as the caisse's TableOperations::merge; one `order.merge` for the caisse.
+     */
+    suspend fun mergeOrder(orderId: Long, tableId: Long): Result<CheckChange> = offline {
+        val catalog = catalog()
+        val actor = catalog.offlineAccountId ?: refusal(NOT_CONFIGURED)
+        val order = openOrder(catalog, orderId)
+        val from = order.table ?: refusal("Cette commande n'est sur aucune table.")
+        if (from.id == tableId) refusal("Choisissez une autre table.")
+        val into = catalog.table(tableId) ?: refusal("Table introuvable dans les données hors ligne de ce poste.")
+
+        val all = openOrders(catalog)
+        val fromChecks = all.filter { it.table?.id == from.id }
+        val target = all.firstOrNull { it.table?.id == into.id }
+        val main = target ?: fromChecks.first()
+        val folded = fromChecks.filter { it.id != main.id }
+        val commandId = UUID.randomUUID().toString()
+        val at = now()
+
+        // What was before, to undo it all when the action cannot be queued.
+        val before = mutableListOf<LocalOrderEntity>()
+        suspend fun record(id: Long, edit: LocalEdit, adjust: (LocalOrderEntity) -> LocalOrderEntity = { it }) {
+            val local = localFor(id) ?: baseFor(id)
+            before += local
+            store.saveLocalOrder(adjust(local).copy(editsJson = json.encodeToString(editsSerializer, edits(local) + edit)))
+        }
+        if (target == null) {
+            record(main.id, LocalEdit(commandId, "move", tableId = into.id, tableCode = into.code, at = at)) { it.copy(tableId = into.id, tableCode = into.code) }
+        }
+        folded.forEach { check ->
+            record(main.id, LocalEdit(commandId, "absorb", items = check.items, paid = check.amountPaid, at = at))
+            record(check.id, LocalEdit(commandId, "merged", at = at)) { it.copy(status = "merged") }
+        }
+        val local = localFor(orderId) ?: baseFor(orderId)
+        try {
+            sync.enqueue("order.merge", buildJsonObject {
+                put("order_ref", local.ref)
+                put("table_id", into.id)
+            }, actor, "Fusion avec la table ${into.code} · " + label(local), orderRef = local.ref, id = commandId)
+        } catch (e: Exception) {
+            before.reversed().forEach { store.saveLocalOrder(it) }
+            throw e
+        }
+        AppLog.info("Hors ligne : table ${from.code} fusionnée avec la table ${into.code}")
+        CheckChange(detail(catalog, main.id) ?: refusal(NOT_FOUND), "Table ${from.code} fusionnée avec la table ${into.code} (hors ligne).")
+    }
+
+    /**
+     * « Séparer » offline (O4c): the chosen quantities become a new order on the same table, with its own temporary
+     * number (« D1-008 »); refused once the check took money, as online. One `order.split` for the caisse.
+     */
+    suspend fun splitOrder(orderId: Long, quantities: Map<Long, Int>): Result<CheckChange> = offline {
+        val catalog = catalog()
+        val actor = catalog.offlineAccountId ?: refusal(NOT_CONFIGURED)
+        val order = openOrder(catalog, orderId)
+        if (order.amountPaid > 0.0) refusal("Ce ticket a déjà un paiement : utilisez « Partager l'addition » au moment de payer.")
+        val moves = quantities.filterValues { it > 0 }
+        if (moves.isEmpty()) refusal("Choisissez au moins un article à séparer.")
+        moves.forEach { (id, qty) ->
+            val item = order.items.firstOrNull { it.id == id } ?: refusal("Quantité invalide pour un des articles.")
+            if (qty > item.quantity) refusal("Quantité invalide pour un des articles.")
+        }
+        if (order.items.sumOf { it.quantity } - moves.values.sum() < 1) refusal("Laissez au moins un article sur le ticket d'origine.")
+
+        val number = sync.nextOfflineNumber() ?: refusal(NOT_REGISTERED)
+        val local = localFor(orderId) ?: baseFor(orderId)
+        val commandId = UUID.randomUUID().toString()
+        val at = now()
+        val refs = moves.mapValues { (id, _) -> lineRef(local, id) }
+        val newLines = moves.map { (id, qty) ->
+            val item = order.items.first { it.id == id }
+            LocalLine(
+                lineId = refs.getValue(id), round = 1, commandId = commandId, menuItemId = 0, name = item.name,
+                variation = item.variation, quantity = qty, price = item.price,
+                amount = OfflineCatalog.round2(item.amount / item.quantity * qty), modifiers = item.modifiers, note = item.note,
+                // Already sent: a line that went to a kitchen stays « parti en cuisine » on the new order.
+                stationId = if (item.fired) -1 else null, at = at,
+            )
+        }
+        val created = LocalOrderEntity(
+            ref = UUID.randomUUID().toString(), baseOrderId = null, offlineNumber = number,
+            tableId = order.table?.id, tableCode = order.table?.code, pax = 1, orderType = order.orderType,
+            status = order.status, linesJson = json.encodeToString(linesSerializer, newLines), createdAt = at,
+        )
+        val newId = store.insertLocalOrder(created)
+        val saved = local.copy(editsJson = json.encodeToString(editsSerializer,
+            edits(local) + LocalEdit(commandId, "split_out", moves = moves.mapKeys { it.key.toString() }, at = at)))
+        store.saveLocalOrder(saved)
+        try {
+            sync.enqueue("order.split", buildJsonObject {
+                put("order_ref", saved.ref)
+                put("new_ref", created.ref)
+                put("offline_number", number)
+                putJsonArray("lines") {
+                    moves.forEach { (id, qty) -> addJsonObject { put("line_ref", refs.getValue(id)); put("quantity", qty) } }
+                }
+            }, actor, "Séparation · ${label(saved)} → $number", orderRef = saved.ref, id = commandId)
+        } catch (e: Exception) {
+            store.saveLocalOrder(local)
+            store.deleteLocalOrder(newId)
+            throw e
+        }
+        // The new order is opened by the PIN already typed on its check (payments, changes).
+        if (paymentsOpen(orderId)) unlockPayments(screenId(newId))
+        val fresh = detail(catalog, screenId(newId))
+        CheckChange(
+            detail(catalog, orderId) ?: refusal(NOT_FOUND),
+            "Nouveau ticket $number créé hors ligne (${catalog.money(fresh?.total ?: 0.0, true)}).",
+            newOrder = com.lebarock.lebarock_desktop.data.remote.NewOrderRefDto(screenId(newId), number, fresh?.total ?: 0.0),
+        )
     }
 
     // ---------------------------------------------------------------- payments (step 3)
@@ -989,12 +1149,13 @@ class OfflineOrders(
     private fun due(order: OrderDetailDto): Double = maxOf(0.0, OfflineCatalog.round2(order.total - order.amountPaid))
 
     /** How the caisse finds a line of a split by article: its offline line id, or its own id. */
-    private fun lineRef(local: LocalOrderEntity, itemId: Long): String {
+    private suspend fun lineRef(local: LocalOrderEntity, itemId: Long): String {
         if (itemId >= 0) return itemId.toString()
         val n = -itemId - 1
         val owner = n / 10_000
         val index = (n % 10_000).toInt()
-        val lines = if (owner == local.localId) lines(local) else emptyList()
+        // A line of another order taken offline (folded in, O4c): read from its own order.
+        val lines = if (owner == local.localId) lines(local) else store.localOrder(owner)?.let { lines(it) }.orEmpty()
         return lines.getOrNull(index)?.lineId ?: itemId.toString()
     }
 

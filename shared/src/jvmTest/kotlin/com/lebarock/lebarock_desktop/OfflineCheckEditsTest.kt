@@ -100,7 +100,8 @@ class OfflineCheckEditsTest {
         store.saveSnapshotPart(SnapshotPartEntity("static", "v1", 0, 0, static, clock.get()))
         store.replaceChecks(SnapshotPartEntity("checks", null, 0, 0, "{}", clock.get()), listOf(OpenCheckEntity(812, "812", null, 1, "kot", 35.2, check812, clock.get())), emptyList())
         store.updateDevice({ DeviceStateEntity(uuid = "pc-1") }) { it.copy(code = "D1") }
-        store.saveOfflineAccesses(listOf(OfflineAccess(9, "Hors ligne — Counter 1", secrets.seal(OfflinePaymentTest.verifier("2468")), secrets.seal(OfflinePaymentTest.verifier("1357")), 2, "Counter 1", 1)))
+        store.saveOfflineAccesses(listOf(OfflineAccess(9, "Hors ligne — Counter 1", secrets.seal(OfflinePaymentTest.verifier("2468")), secrets.seal(OfflinePaymentTest.verifier("1357")), 2, "Counter 1", 1,
+            discountVerifierSealed = secrets.seal(OfflinePaymentTest.verifier("2580")))))
         repository.signInOffline(pins, "2468").getOrThrow()
     }
 
@@ -111,13 +112,15 @@ class OfflineCheckEditsTest {
     private fun pinAsked(result: Result<*>) = (result.exceptionOrNull() as? ApiFailure)?.code == OfflineOrders.PAYMENT_PIN_REQUIRED
 
     @Test
-    fun a_discount_asks_the_managers_pin_and_follows_the_webs_rules() = runBlocking<Unit> {
+    fun a_discount_needs_the_discount_code_and_follows_the_webs_rules() = runBlocking<Unit> {
         ready()
-        assertTrue(pinAsked(orders.setDiscount(812, "percent", 10.0)), "the manager's PIN first")
+        // « Code remise » (client, 2026-11-11): not the payment PIN — the discount code, each time.
+        assertEquals("Le code remise compte de 4 à 6 chiffres.", orders.setDiscount(812, "percent", 10.0).exceptionOrNull()!!.message)
+        assertEquals("Code remise incorrect.", orders.setDiscount(812, "percent", 10.0, "1357").exceptionOrNull()!!.message, "the payment PIN is not the discount code")
         assertTrue(commands().isEmpty())
-        assertTrue(orders.unlockOfflinePayment(812, "1357").isSuccess)
+        assertTrue(orders.checkDiscountCode("2580").isSuccess)
 
-        val change = orders.setDiscount(812, "percent", 10.0).getOrThrow()
+        val change = orders.setDiscount(812, "percent", 10.0, "2580").getOrThrow()
         assertEquals("Remise appliquée (hors ligne).", change.message)
         // 32 − 3.20 = 28.80, service 10 % of it 2.88: 31.68.
         assertEquals(3.2, change.order.discountAmount)
@@ -125,14 +128,15 @@ class OfflineCheckEditsTest {
         assertEquals(2.88, change.order.charges.single().amount)
         val sent = data("order.discount")
         assertEquals("percent", sent["discount_type"]!!.jsonPrimitive.content)
-        assertEquals("payment_pin", sent["authorized_by"]!!.jsonPrimitive.content)
+        assertEquals("discount_code", sent["authorized_by"]!!.jsonPrimitive.content)
         assertEquals("812", sent["order_ref"]!!.jsonPrimitive.content)
         assertEquals(9L, commands().last().actorId, "as the « Hors ligne » account")
         assertEquals(31.68, orders.orderDetail(812).getOrThrow().total, "the check shows it")
 
-        assertEquals("La remise ne peut pas dépasser 100 %.", orders.setDiscount(812, "percent", 120.0).exceptionOrNull()!!.message)
-        // Taken off.
+        assertEquals("La remise ne peut pas dépasser 100 %.", orders.setDiscount(812, "percent", 120.0, "2580").exceptionOrNull()!!.message)
+        // Taken off: no code.
         assertEquals(35.2, orders.setDiscount(812, null, null).getOrThrow().order.total)
+        assertNull(data("order.discount")["authorized_by"])
     }
 
     @Test
@@ -218,8 +222,10 @@ class OfflineCheckEditsTest {
         ready()
         val request = SendOrderRequest(
             tableId = 2, waiterId = 4, items = listOf(SendOrderItem(11, quantity = 2)),
-            removedChargeIds = listOf(5), discountType = "fixed", discountValue = 5.0,
+            removedChargeIds = listOf(5), discountType = "fixed", discountValue = 5.0, discountCode = "2580",
         )
+        // The discount needs its code; the charge and the waiter the PIN.
+        assertEquals("Code remise incorrect.", orders.sendOrder(request.copy(discountCode = "0000")).exceptionOrNull()!!.message)
         assertTrue(pinAsked(orders.sendOrder(request)), "the cart's changes ask the PIN")
         assertTrue(commands().isEmpty(), "nothing sent before")
 

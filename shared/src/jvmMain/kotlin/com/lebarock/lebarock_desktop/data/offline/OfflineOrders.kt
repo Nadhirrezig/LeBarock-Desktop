@@ -540,10 +540,11 @@ class OfflineOrders(
         // O4b: the cart's discount, charges taken off and waiter go with a new order, behind the manager's PIN.
         val waiter = request.waiterId?.takeIf { it != catalog.offlineAccountId }?.let { id -> catalog.waiters.firstOrNull { it.id == id } }
         val changes = existing == null && (request.discountType != null || request.removedChargeIds.isNotEmpty() || waiter != null)
-        if (changes) requirePin(NEW_ORDER)
+        // The discount goes with its « Code remise » (checked by OrdersRepository); charges and waiter with the PIN.
+        if (existing == null && (request.removedChargeIds.isNotEmpty() || waiter != null)) requirePin(NEW_ORDER)
         val (orderId, kitchen) = round(catalog, existing?.id, tableId, request.orderType, request.numberOfPax ?: 1, request.items, request.note)
         if (changes) {
-            unlockPayments(orderId)
+            if (request.removedChargeIds.isNotEmpty() || waiter != null) unlockPayments(orderId)
             request.removedChargeIds.forEach { removeChargeNow(catalog, orderId, it) }
             if (request.discountType != null) discountNow(catalog, orderId, request.discountType, request.discountValue)
             if (waiter != null) waiterNow(catalog, orderId, waiter.id)
@@ -709,9 +710,11 @@ class OfflineOrders(
     /** « Annuler la commande » offline: the reasons for a whole order, from the copy. */
     suspend fun cancelReasons(): Result<List<CancelReasonDto>> = offline { catalog().cancelReasons }
 
-    /** « Remise » on an open check, behind the manager's PIN; null [type] takes it off. The web's rules. */
+    /**
+     * « Remise » on an open check; null [type] takes it off. The web's rules. Since the « Code remise » (client,
+     * 2026-11-11) a discount goes with that code, checked by OrdersRepository before this; no payment PIN.
+     */
     suspend fun setDiscount(orderId: Long, type: String?, value: Double?): Result<CheckChange> = offline {
-        requirePin(orderId)
         val catalog = catalog()
         discountNow(catalog, orderId, type, value)
         CheckChange(detail(catalog, orderId) ?: refusal(NOT_FOUND), if (type == null) "Remise retirée (hors ligne)." else "Remise appliquée (hors ligne).")
@@ -781,8 +784,14 @@ class OfflineOrders(
             if (order.amountPaid > 0 && after.total < order.amountPaid - TOLERANCE) {
                 refusal("Cette remise ferait passer le ticket sous ce qui est déjà payé (${catalog.money(order.amountPaid)}).")
             }
-            change(catalog, orderId, "order.discount", "Remise · ",
-                data = { put("discount_type", kind); if (kind != null) put("discount_value", value ?: 0.0) },
+            change(catalog, orderId, "order.discount", "Remise · ", pin = false,
+                data = {
+                    put("discount_type", kind)
+                    if (kind != null) {
+                        put("discount_value", value ?: 0.0)
+                        put("authorized_by", "discount_code")
+                    }
+                },
                 edit = { LocalEdit(it, "discount", discountType = kind, discountValue = value.takeIf { kind != null }, at = now()) })
         }
     }

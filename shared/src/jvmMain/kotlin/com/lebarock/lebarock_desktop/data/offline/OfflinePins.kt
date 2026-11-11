@@ -29,6 +29,8 @@ class OfflinePins(
         const val WRONG = "Code PIN incorrect."
         const val NONE =
             "Connexion hors ligne indisponible : définissez le code PIN hors ligne d'une caisse (Paramètres → Mode hors ligne sur la caisse) et enregistrez ce poste avec la clé de synchronisation (Réglages → Mode hors ligne)."
+        const val NO_DISCOUNT_CODE = "Aucun code remise n'est défini : l'Admin le définit dans Paramètres → Remises."
+        const val DISCOUNT_WRONG = "Code remise incorrect."
         const val NO_PAYMENT_PIN =
             "Paiement hors ligne indisponible : aucun code de paiement n'est défini sur la caisse (Paramètres → Mode hors ligne)."
 
@@ -63,6 +65,15 @@ class OfflinePins(
             found = candidates.firstOrNull { (_, verifier) -> matches(typed, verifier) }?.first
             found != null
         }.map { found!! }
+    }
+
+    /** « Code remise » (client, 2026-11-11): the restaurant's discount code, for a discount added offline. */
+    suspend fun checkDiscountCode(code: String): Result<Unit> {
+        val verifier = secrets.open(store.offlineAccess()?.discountVerifierSealed) ?: return Result.failure(IllegalStateException(NO_DISCOUNT_CODE))
+        return check(code) { typed -> matches(typed, verifier) }.recoverCatching { e ->
+            // The same words as the caisse's.
+            throw IllegalStateException(e.message?.replace(WRONG, DISCOUNT_WRONG)?.replace("Le code PIN compte", "Le code remise compte"))
+        }
     }
 
     /** The shared payment PIN (Admin / Gérant), for offline payments on a check. */

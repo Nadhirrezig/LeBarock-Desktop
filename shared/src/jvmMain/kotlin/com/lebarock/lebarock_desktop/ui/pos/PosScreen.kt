@@ -912,6 +912,17 @@ private fun DiscountDialog(model: PosModel, f: DiscountForm) {
                 },
             )
         }
+        // « Code remise » (client, 2026-11-11): asked for each discount added or changed.
+        FormField("Code remise", error = f.codeError, help = if (f.codeError == null) "Demandé à chaque remise ; pas pour la retirer." else null) {
+            TextInput(
+                f.code, { v -> model.editDiscount { it.copy(code = v.filter { c -> c.isDigit() }.take(6), codeError = null) } },
+                placeholder = "Code à 4–6 chiffres", isError = f.codeError != null,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { e ->
+                    if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && e.key == androidx.compose.ui.input.key.Key.Enter) { model.saveDiscount(); true } else false
+                },
+            )
+        }
     }
 }
 

@@ -48,7 +48,15 @@ data class ModifierPick(
 data class StockPrompt(val orderId: Long, val message: String, val canForce: Boolean, val action: String)
 
 /** The web POS's « Ajouter une remise » window: a value and Montant fixe / Pourcentage. */
-data class DiscountForm(val type: String = Discount.FIXED, val valueText: String = "", val error: String? = null, val busy: Boolean = false)
+/** [code]: the « Code remise » (client, 2026-11-11), asked for each discount added or changed; [codeError] its refusal. */
+data class DiscountForm(
+    val type: String = Discount.FIXED,
+    val valueText: String = "",
+    val error: String? = null,
+    val busy: Boolean = false,
+    val code: String = "",
+    val codeError: String? = null,
+)
 
 /** The covers window for a free table (web: « Nombre de Couverts », 1 by default). */
 data class CoversPick(val table: TableDto, val count: Int = 1)
@@ -114,6 +122,9 @@ class PosModel(
 
     /** D5: the new order's « Remise » (with « Appliquer une remise »), sent with it as on the web. */
     var discount by mutableStateOf<Discount?>(null)
+
+    /** The « Code remise » the cart's discount was allowed with, sent with the new order (checked again there). */
+    private var discountCode: String? = null
         private set
     var discountForm by mutableStateOf<DiscountForm?>(null)
         private set
@@ -481,23 +492,48 @@ class PosModel(
             f.type == Discount.PERCENT && value > 100 -> { discountForm = f.copy(error = "La remise ne peut pas dépasser 100 %."); return }
         }
         val next = Discount(f.type, value!!).takeIf { it.value > 0 }
+        // « Code remise »: for each discount added or changed (not to take it off).
+        if (next != null && f.code.isBlank()) {
+            discountForm = f.copy(codeError = "Code remise requis pour appliquer une remise.")
+            return
+        }
         val check = existingOrder
         if (check == null) {
-            discount = next
-            discountForm = null
+            if (next == null) {
+                discount = null
+                discountCode = null
+                discountForm = null
+                return
+            }
+            // Checked at once (the caisse, or offline the copy), then kept to go with the order.
+            discountForm = f.copy(busy = true, codeError = null)
+            scope.launch {
+                orders.checkDiscountCode(f.code)
+                    .onSuccess {
+                        discount = next
+                        discountCode = f.code.trim()
+                        discountForm = null
+                    }
+                    .onFailure { e -> discountForm = f.copy(busy = false, code = "", codeError = e.message ?: "Code remise incorrect.") }
+            }
             return
         }
         // On an open check the web saves it at once on the order.
-        discountForm = f.copy(busy = true)
+        discountForm = f.copy(busy = true, codeError = null)
         scope.launch {
-            orders.setDiscount(check.id, next?.type, next?.value)
+            orders.setDiscount(check.id, next?.type, next?.value, f.code.trim().takeIf { next != null })
                 .onSuccess { change ->
                     existing = UiState.Success(change.order)
                     discountForm = null
                     messageChannel.trySend(change.message)
                 }
                 .onFailure { e ->
-                    discountForm = f.copy(busy = false, error = if (this@PosModel.check.pin.asks(e, check.id, ::saveDiscount)) null else e.message ?: "Remise refusée.")
+                    val codeRefused = (e as? ApiFailure)?.code?.startsWith("discount_code") == true || e.message?.contains("ode remise") == true
+                    discountForm = if (codeRefused) {
+                        f.copy(busy = false, code = "", codeError = e.message)
+                    } else {
+                        f.copy(busy = false, error = if (this@PosModel.check.pin.asks(e, check.id, ::saveDiscount)) null else e.message ?: "Remise refusée.")
+                    }
                 }
         }
     }
@@ -507,6 +543,7 @@ class PosModel(
         val check = existingOrder
         if (check == null) {
             discount = null
+            discountCode = null
             return
         }
         if (!canDiscount || !checkTakesDiscount) return
@@ -552,6 +589,7 @@ class PosModel(
         roundNote = ""
         removedCharges = emptySet()
         discount = null
+        discountCode = null
         discountForm = null
         waiterId = sessions.current?.user?.id
         existing = null
@@ -608,6 +646,7 @@ class PosModel(
             removedChargeIds = removedCharges.toList(),
             discountType = discount?.takeIf { r?.applyDiscount == true }?.type,
             discountValue = discount?.takeIf { r?.applyDiscount == true }?.value,
+            discountCode = discountCode.takeIf { discount != null && r?.applyDiscount == true },
         )
         orders.sendOrder(request)
             .onSuccess { sent ->

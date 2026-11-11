@@ -7,6 +7,7 @@ import com.lebarock.lebarock_desktop.data.SecretBox
 import com.lebarock.lebarock_desktop.data.offline.ConnectionMonitor
 import com.lebarock.lebarock_desktop.data.offline.DeviceStateEntity
 import com.lebarock.lebarock_desktop.data.offline.OfflineOrders
+import com.lebarock.lebarock_desktop.data.offline.OfflinePins
 import com.lebarock.lebarock_desktop.data.offline.OfflineStore
 import com.lebarock.lebarock_desktop.data.offline.OfflineSync
 import com.lebarock.lebarock_desktop.data.offline.OpenCheckEntity
@@ -258,14 +259,15 @@ class OfflineOrdersTest {
         assertEquals("Hors ligne : libérer une table n'est pas possible tant que la caisse ne répond pas.", refusals[1].message)
         assertTrue(refusals.all { it.code == OfflineOrders.OFFLINE_CODE && it.message!!.startsWith("Hors ligne : ") })
 
-        // O4b: cancel, discount, a line taken off and the cart's discount / charges ask the manager's PIN instead.
+        // O4b: cancel and the cart's charges ask the manager's PIN instead.
         val pinAsked = listOf(
             orders.cancel(812, null, "test"),
-            orders.setDiscount(812, "percent", 10.0),
-            orders.sendOrder(SendOrderRequest(tableId = 2, items = listOf(pizza()), discountType = "percent", discountValue = 10.0)),
             orders.sendOrder(SendOrderRequest(tableId = 2, items = listOf(pizza()), removedChargeIds = listOf(5))),
         ).map { (it.exceptionOrNull() as ApiFailure).code }
-        assertEquals(List(4) { OfflineOrders.PAYMENT_PIN_REQUIRED }, pinAsked)
+        assertEquals(List(2) { OfflineOrders.PAYMENT_PIN_REQUIRED }, pinAsked)
+        // « Code remise »: a discount asks the discount code (none on this PC: no PIN checks here).
+        assertEquals(OfflinePins.NO_DISCOUNT_CODE, orders.setDiscount(812, "percent", 10.0, "2580").exceptionOrNull()!!.message)
+        assertEquals(OfflinePins.NO_DISCOUNT_CODE, orders.sendOrder(SendOrderRequest(tableId = 2, items = listOf(pizza()), discountType = "percent", discountValue = 10.0, discountCode = "2580")).exceptionOrNull()!!.message)
         assertEquals(0, store.outboxSize(), "nothing recorded")
         assertEquals(0, printed.size)
         assertEquals(0, server.requestCount)

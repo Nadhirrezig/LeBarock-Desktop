@@ -583,6 +583,8 @@ class OfflineSync(
     private suspend fun keepOfflineAccess(static: JsonObject) {
         val payment = ((static["offline"] as? JsonObject)?.get("payment_pin") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
         val paymentSealed = payment?.let { secrets.seal(it) }
+        val discount = ((static["offline"] as? JsonObject)?.get("discount_code") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        val discountSealed = discount?.let { secrets.seal(it) }
         val accesses = (static["caisses"] as? JsonArray).orEmpty().mapNotNull { element ->
             val caisse = element as? JsonObject ?: return@mapNotNull null
             val account = caisse["offline_account"] as? JsonObject ?: return@mapNotNull null
@@ -596,6 +598,7 @@ class OfflineSync(
                 caisseId = caisse["id"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null,
                 caisseName = (caisse["name"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
                 caisseMenuId = (caisse["menu_id"] as? JsonPrimitive)?.longOrNull ?: 0,
+                discountVerifierSealed = discountSealed,
             )
         }
         store.saveOfflineAccesses(accesses)
@@ -617,7 +620,7 @@ class OfflineSync(
                 JsonObject(caisse + ("offline_account" to JsonObject(account - "verifier")))
             })
         }
-        val offline = (static["offline"] as? JsonObject)?.let { JsonObject(it - "payment_pin") }
+        val offline = (static["offline"] as? JsonObject)?.let { JsonObject(it - "payment_pin" - "discount_code") }
         return JsonObject(static + listOfNotNull(caisses?.let { "caisses" to it }, offline?.let { "offline" to it }).toMap())
     }
 

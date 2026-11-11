@@ -183,6 +183,10 @@ interface AltosApi {
     @POST("api/mobile/orders/{id}/discount")
     suspend fun setDiscount(@Path("id") id: Long, @Body body: DiscountRequest): Envelope<OrderDetailDto>
 
+    /** « Code remise » (client, 2026-11-11): checked at once in the discount window. */
+    @POST("api/mobile/discount-code/check")
+    suspend fun checkDiscountCode(@Body body: DiscountCodeRequest): Envelope<Unit?>
+
     // ---- Offline mode: the caisse's sync API (the handheld's calls) ----
 
     /**

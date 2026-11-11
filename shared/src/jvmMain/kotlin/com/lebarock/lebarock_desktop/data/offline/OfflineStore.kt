@@ -158,6 +158,8 @@ data class OfflineAccess(
     val caisseId: Long,
     val caisseName: String,
     val caisseMenuId: Long,
+    /** « Code remise » (client, 2026-11-11): its check, the restaurant's (the same on each row). */
+    val discountVerifierSealed: String? = null,
 )
 
 /**
@@ -168,7 +170,7 @@ class OfflineStore private constructor(private val connection: Connection, val p
 
     companion object {
         /** The schema's version (`PRAGMA user_version`); raise it with each change and add its step to [migrate]. */
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
 
         /**
          * Opens `offline.db` (made on the first start). A file that cannot be read is kept aside
@@ -223,6 +225,8 @@ class OfflineStore private constructor(private val connection: Connection, val p
                 if (version < 2) SCHEMA_V2.forEach(st::execute)
                 // O4b: the check's changes taken offline.
                 if (version < 3) SCHEMA_V3.forEach(st::execute)
+                // « Code remise »: its check comes with the copy.
+                if (version < 4) SCHEMA_V4.forEach(st::execute)
                 st.execute("PRAGMA user_version=$SCHEMA_VERSION")
             }
             connection.commit()
@@ -399,6 +403,7 @@ class OfflineStore private constructor(private val connection: Connection, val p
     private fun accessOf(rs: java.sql.ResultSet) = OfflineAccess(
         rs.getLong("account_id"), rs.getString("account_name"), rs.getString("account_verifier_sealed"),
         rs.getString("payment_verifier_sealed"), rs.getLong("caisse_id"), rs.getString("caisse_name"), rs.getLong("caisse_menu_id"),
+        rs.getString("discount_verifier_sealed"),
     )
 
     /** The PIN checks of a new copy replace the old ones; an empty list = no PIN at the caisse any more. */
@@ -407,9 +412,9 @@ class OfflineStore private constructor(private val connection: Connection, val p
         accesses.forEach { access ->
             run(
                 "INSERT OR REPLACE INTO offline_access (caisse_id, account_id, account_name, account_verifier_sealed, " +
-                    "payment_verifier_sealed, caisse_name, caisse_menu_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "payment_verifier_sealed, caisse_name, caisse_menu_id, discount_verifier_sealed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 access.caisseId, access.accountId, access.accountName, access.accountVerifierSealed, access.paymentVerifierSealed,
-                access.caisseName, access.caisseMenuId,
+                access.caisseName, access.caisseMenuId, access.discountVerifierSealed,
             )
         }
     }
@@ -605,4 +610,9 @@ private val SCHEMA_V2 = listOf(
 /** O4b: the check's changes taken offline, kept with their order. */
 private val SCHEMA_V3 = listOf(
     "ALTER TABLE local_orders ADD COLUMN edits_json TEXT",
+)
+
+/** « Code remise » (client, 2026-11-11): its check, kept with the PIN checks. */
+private val SCHEMA_V4 = listOf(
+    "ALTER TABLE offline_access ADD COLUMN discount_verifier_sealed TEXT",
 )

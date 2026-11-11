@@ -424,6 +424,8 @@ data class SendOrderRequest(
     // D5: the cart's « Remise » (fixed | percent), with « Appliquer une remise ».
     @SerialName("discount_type") val discountType: String? = null,
     @SerialName("discount_value") val discountValue: Double? = null,
+    // « Code remise » (client, 2026-11-11): sent with a discount.
+    @SerialName("discount_code") val discountCode: String? = null,
 )
 
 @Serializable
@@ -550,7 +552,13 @@ data class SplitPartItemDto(
 data class DiscountRequest(
     val type: String?,
     val value: Double? = null,
+    /** « Code remise » (client, 2026-11-11): needed to add or change a discount, not to take it off. */
+    @SerialName("discount_code") val discountCode: String? = null,
 )
+
+/** POST /discount-code/check: the « Code remise » typed, checked at once. */
+@Serializable
+data class DiscountCodeRequest(val code: String)
 
 @Serializable
 data class PaymentResultDto(

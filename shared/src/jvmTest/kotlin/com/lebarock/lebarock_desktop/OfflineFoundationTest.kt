@@ -229,7 +229,7 @@ class OfflineFoundationTest {
                    {"id":3,"name":"Bar","menu_id":null,"offline_account":{"id":11,"name":"Hors ligne Bar","verifier":"pbkdf2-sha256${'$'}100000${'$'}YmFy${'$'}YmFyMg=="}}],
         "menu":{"items":[{"id":1,"name":"Coca","menu_id":1},{"id":2,"name":"Café","menu_id":1}]},
         "areas":[{"id":1,"name":"Salle","tables":[{"id":1,"code":"1"},{"id":2,"code":"2"}]},{"id":2,"name":"Terrasse","tables":[{"id":3,"code":"T1"}]}],
-        "offline":{"payment_pin":"pbkdf2-sha256${'$'}100000${'$'}cGF5${'$'}cGlu"}}"""
+        "offline":{"payment_pin":"pbkdf2-sha256${'$'}100000${'$'}cGF5${'$'}cGlu","discount_code":"pbkdf2-sha256${'$'}100000${'$'}ZGM=${'$'}Y29kZQ=="}}"""
 
     private val checks = """{"generated_at":"2026-11-10T20:00:00+00:00",
         "open_checks":[{"id":812,"order_number":"812","table":{"id":1,"code":"1"},"status":"kot","total":18.5},{"id":813,"order_number":813,"offline_number":"H1-004","status":"billed","total":7}],
@@ -357,6 +357,9 @@ class OfflineFoundationTest {
         assertFalse("pbkdf2" in access.accountVerifierSealed!!)
         assertTrue(secrets.open(access.accountVerifierSealed)!!.startsWith("pbkdf2-sha256$100000$"))
         assertTrue(secrets.open(access.paymentVerifierSealed)!!.startsWith("pbkdf2-sha256$"))
+        // « Code remise »: its check kept sealed too, never in the stored copy.
+        assertEquals("pbkdf2-sha256${'$'}100000${'$'}ZGM=${'$'}Y29kZQ==", secrets.open(access.discountVerifierSealed))
+        assertFalse("discount_code" in stored.json)
 
         assertEquals(listOf(812L, 813L), db.openChecks().map { it.id })
         assertEquals("813", db.openChecks()[1].number, "a number the caisse sent as a number")

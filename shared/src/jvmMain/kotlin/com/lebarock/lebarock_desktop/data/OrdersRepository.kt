@@ -126,7 +126,11 @@ class OrdersRepository(
     // ---- The order's lifecycle ----
 
     /** A new order: kot (Envoyer) | bill (Encaisser Ticket) | bill_print (Imprimer Ticket). */
-    suspend fun sendOrder(request: SendOrderRequest): Result<Printed<OrderActionDto>> = offlineNow()?.sendOrder(request) ?: caisse.call {
+    suspend fun sendOrder(request: SendOrderRequest): Result<Printed<OrderActionDto>> = offlineNow()?.let { off ->
+        // « Code remise »: the cart's discount offline is checked against the copy's check first.
+        if (request.discountType != null) checkOfflineDiscountCode(request.discountCode)?.let { return Result.failure(it) }
+        off.sendOrder(request)
+    } ?: caisse.call {
         val body = if (request.action == "bill_print") request.copy(printTarget = target.apiValue) else request
         val envelope = caisse.api().sendOrder(body)
         Printed(envelope.data ?: throw unexpected(), if (request.action == "bill_print") outcome(envelope) else null)
@@ -263,8 +267,28 @@ class OrdersRepository(
     }
 
     /** « Remise » on an open check (fixed | percent); [type] null takes it off. */
-    suspend fun setDiscount(orderId: Long, type: String?, value: Double?): Result<CheckChange> =
-        offlineNow()?.setDiscount(orderId, type, value) ?: change { caisse.api().setDiscount(real(orderId), DiscountRequest(type, value)) }
+    suspend fun setDiscount(orderId: Long, type: String?, value: Double?, code: String? = null): Result<CheckChange> {
+        offlineNow()?.let { off ->
+            // « Code remise »: checked here against the copy's check, then the discount is queued with it.
+            if (type != null) checkOfflineDiscountCode(code)?.let { return Result.failure(it) }
+            return off.setDiscount(orderId, type, value)
+        }
+        return change { caisse.api().setDiscount(real(orderId), DiscountRequest(type, value, code?.takeIf { type != null })) }
+    }
+
+    /**
+     * « Code remise » (client, 2026-11-11) typed in the discount window, checked at once: by the caisse, or offline
+     * against the copy's check. The discount itself is checked again.
+     */
+    suspend fun checkDiscountCode(code: String): Result<Unit> {
+        if (offlineNow() != null) return checkOfflineDiscountCode(code)?.let { Result.failure(it) } ?: Result.success(Unit)
+        return caisse.call { caisse.api().checkDiscountCode(com.lebarock.lebarock_desktop.data.remote.DiscountCodeRequest(code.trim())); Unit }
+    }
+
+    private suspend fun checkOfflineDiscountCode(code: String?): Throwable? {
+        val p = pins ?: return IllegalStateException(com.lebarock.lebarock_desktop.data.offline.OfflinePins.NO_DISCOUNT_CODE)
+        return p.checkDiscountCode(code.orEmpty().trim()).exceptionOrNull()
+    }
 
     private suspend fun change(block: suspend () -> Envelope<OrderDetailDto>): Result<CheckChange> = caisse.call {
         val envelope = block()

@@ -363,6 +363,8 @@ data class OrderDetailDto(
     @SerialName("discount_type") val discountType: String? = null,
     @SerialName("discount_value") val discountValue: Double? = null,
     @SerialName("tip_amount") val tipAmount: Double? = null,
+    /** O4d: the tip's note (shown again in the « Pourboire » window offline). */
+    @SerialName("tip_note") val tipNote: String? = null,
     @SerialName("amount_paid") val amountPaid: Double = 0.0,
     val total: Double = 0.0,
     @SerialName("items_count") val itemsCount: Int = 0,

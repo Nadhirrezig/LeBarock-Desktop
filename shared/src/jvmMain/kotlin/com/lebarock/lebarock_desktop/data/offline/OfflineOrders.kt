@@ -97,7 +97,7 @@ data class LocalPayment(
 @Serializable
 data class LocalEdit(
     @SerialName("command_id") val commandId: String,
-    /** discount | cancel | waiter | remove_charge | remove_line | move | absorb | merged | split_out */
+    /** discount | cancel | waiter | remove_charge | remove_line | move | absorb | merged | split_out | tip */
     val kind: String,
     @SerialName("discount_type") val discountType: String? = null,
     @SerialName("discount_value") val discountValue: Double? = null,
@@ -116,6 +116,9 @@ data class LocalEdit(
     val paid: Double? = null,
     /** O4c: what left for a new check (split_out): the line's screen id → its quantity moved. */
     val moves: Map<String, Int>? = null,
+    /** O4d: the tip set offline (0 takes it off) and its note. */
+    @SerialName("tip_amount") val tipAmount: Double? = null,
+    @SerialName("tip_note") val tipNote: String? = null,
     val at: Long,
 )
 
@@ -439,6 +442,7 @@ class OfflineOrders(
                 "move" -> o.copy(table = e.tableId?.let { OrderRefDto(it, e.tableCode) })
                 "absorb" -> o.copy(items = o.items + e.items.orEmpty(), amountPaid = OfflineCatalog.round2(o.amountPaid + (e.paid ?: 0.0)))
                 "merged" -> o.copy(status = "merged")
+                "tip" -> o.copy(tipAmount = e.tipAmount?.takeIf { it > 0.0 }, tipNote = e.tipNote.takeIf { (e.tipAmount ?: 0.0) > 0.0 })
                 "split_out" -> o.copy(items = o.items.mapNotNull { item ->
                     val moved = e.moves?.get(item.id.toString()) ?: return@mapNotNull item
                     val left = item.quantity - moved
@@ -870,6 +874,29 @@ class OfflineOrders(
         }
     }
 
+    // ---------------------------------------------------------------- the tip (O4d)
+
+    /**
+     * « Pourboire » offline (O4d, client 2026-11-11): as online — it replaces the check's tip (0 takes it off), the
+     * total follows; no PIN; only when the restaurant allows the tip at the POS. Shown at once and sent as
+     * `order.tip`; the check paid at the caisse meanwhile refuses it (« À vérifier »).
+     */
+    suspend fun tip(orderId: Long, amount: Double, note: String?): Result<CheckChange> = offline {
+        val catalog = catalog()
+        if (!catalog.tipAllowed) refusal("Le pourboire n'est pas autorisé.")
+        if (amount < 0.0) refusal("Indiquez le pourboire (un nombre).")
+        openOrder(catalog, orderId)
+        val tip = OfflineCatalog.round2(amount)
+        val text = note?.trim()?.take(255)?.ifEmpty { null }
+        change(catalog, orderId, "order.tip", "Pourboire · ", pin = false,
+            data = {
+                put("amount", tip)
+                if (tip > 0.0 && text != null) put("note", text)
+            },
+            edit = { LocalEdit(it, "tip", tipAmount = tip, tipNote = text.takeIf { tip > 0.0 }, at = now()) })
+        CheckChange(detail(catalog, orderId) ?: refusal(NOT_FOUND), if (tip > 0.0) "Pourboire ajouté (hors ligne)." else "Pourboire retiré (hors ligne).")
+    }
+
     // ---------------------------------------------------------------- the table (O4c)
 
     /** « Changer de table » offline (O4c, as online: no PIN): to a free table of the copy. */
@@ -1005,7 +1032,10 @@ class OfflineOrders(
 
     // ---------------------------------------------------------------- payments (step 3)
 
-    /** The payment window offline: cash and card (and the bill divided), no credit, no tip; the drawer is the caisse's. */
+    /**
+     * The payment window offline: cash and card (and the bill divided), no credit; the drawer is the caisse's. The tip
+     * as online when the restaurant allows it (O4d), without the payment PIN.
+     */
     suspend fun paymentContext(orderId: Long): Result<PaymentContextDto> = offline {
         val catalog = catalog()
         val order = detail(catalog, orderId) ?: refusal(NOT_FOUND)
@@ -1023,7 +1053,8 @@ class OfflineOrders(
             amountPaid = order.amountPaid,
             due = due(order),
             currencyDecimals = catalog.decimals,
-            canAddTip = false,
+            canAddTip = catalog.tipAllowed && order.status != "paid",
+            tipNote = order.tipNote,
             cashSessionRequired = false,
             cashSessionOpen = true,
             caisse = CaisseDto(catalog.caisseId, catalog.caisseName),

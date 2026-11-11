@@ -93,6 +93,8 @@ class OfflineCatalog(root: JsonObject, json: Json, wantedCaisseId: Long? = null)
     val restaurantName: String = restaurant.str("name").orEmpty()
     val restaurantLines: List<String> = (restaurant?.get("lines") as? JsonArray).orEmpty().mapNotNull { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
     val timezone: String = restaurant.str("timezone") ?: TimeZone.getDefault().id
+    /** O4d: « Pourboire » offline follows the restaurant's setting (« pourboire au POS »), as online. */
+    val tipAllowed: Boolean = restaurant?.get("tip_pos")?.let { runCatching { it.jsonPrimitive.booleanOrNull }.getOrNull() } == true
 
     private val receipt = restaurant.obj("receipt")
     val showTableNumber = receipt.bool("show_table_number")

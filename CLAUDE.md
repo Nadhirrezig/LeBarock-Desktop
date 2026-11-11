@@ -19,7 +19,7 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   kotlinx.serialization, material-icons-extended, JNA (Windows DPAPI and registry), sqlite-jdbc (the offline store; the
   installed app needs the `java.sql` module, set in `desktopApp/build.gradle.kts`).
 - Modules: `shared` (all app code `src/jvmMain`, tests `src/jvmTest`), `desktopApp` (window, tray, installer settings).
-- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**131 tests**, 2026-11-11).
+- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**132 tests**, 2026-11-11).
 - Installer: `gradlew :desktopApp:packageMsi` **on Windows** → `desktopApp/build/compose/binaries/main/msi/AltosPOS-x.y.z.msi`.
   Raise `altospos.version` for each release (MAJOR.MINOR.BUILD); `upgradeUuid` never changes.
 - Data folder `%APPDATA%\AltosPOS` (`settings.json`, `offline.db`, `logs\`, `certs\`, `cache\images`, lock file);
@@ -92,7 +92,9 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   back when the caisse applies it.** **O4c (client, 2026-11-11): « Changer de table », « Fusionner », « Séparer »
   offline, as online (no PIN)** — shown at once (edits `move` / `absorb` / `merged` / `split_out`; the floor frees the
   table left and takes the one reached), one action each for the caisse; a split gets its own number « D1-008 »; a
-  table taken meanwhile is refused at the caisse (« À vérifier »). Still waiting for the caisse: credit, tip, customer,
+  table taken meanwhile is refused at the caisse (« À vérifier »). **O4d (client, 2026-11-11): « Pourboire » offline in
+  the payment window, as online, no PIN, only when the copy says the restaurant takes tips (`tip_pos`)** — shown at once
+  (edit `tip`), sent as `order.tip`; a check paid at the caisse meanwhile refuses it. Still waiting for the caisse: credit, customer,
   « Libérer la table », Caisse page, expenses. The caisse's `order.remove_line` is used since O4b (a sent line with no kitchen station, with its reason).
 - **Not included:** cash drawer, customer display, barcode, kitchen screen, waiter notifications, QR approvals.
 
@@ -173,7 +175,9 @@ USB printing through a Windows driver, tray and registry — the client's test.
       with its reason, and cancel another check; start the caisse: same totals, check « Annulée » with its reason.
 - [x] **Offline O4c** table operations offline (2026-11-11) — client to test: stop the caisse, move a check to a free
       table, split one line of another, merge its table into the first; start the caisse: same checks and totals.
-- [ ] **Offline O4d** tip offline. Credit, customer, Caisse page and expenses stay online (client, 2026-11-11).
+- [x] **Offline O4d** tip offline (2026-11-11) — client to test: restaurant set to take tips, stop the caisse, a check
+      → Encaisser → « Pourboire » 2 DT with a note (no PIN), pay; start the caisse: same total, tip and note. Credit,
+      customer, Caisse page and expenses stay online (client, 2026-11-11).
 - [ ] **D7 wrap-up** after O4 (CLAUDE.md files, deployment branches), then **MSI release — last** (client, 2026-11-10).
 
 ## Open questions
@@ -197,3 +201,4 @@ USB printing through a Windows driver, tray and registry — the client's test.
   D1-004, T3 merged into T4; the caisse back → 4 actions applied, #2 on T4 at 19.800 as on the PC). Found: the split's
   message had two brackets (fixed).
   « Code remise » built: the discount window asks the code (online and offline, store v4); 131 tests pass.
+  O4d built: the tip offline (no PIN, follows the setting); 132 tests pass. O4 done; next D7.

@@ -259,12 +259,11 @@ class OrdersRepository(
     }
 
     /** « Pourboire »: sets (or, at 0, takes off) the check's tip; the total follows. */
-    suspend fun tip(orderId: Long, amount: Double, note: String?): Result<Unit> = waits("ajouter un pourboire") {
-        caisse.call {
+    suspend fun tip(orderId: Long, amount: Double, note: String?): Result<Unit> =
+        offlineNow()?.tip(orderId, amount, note)?.map { } ?: caisse.call {
             caisse.api().tip(real(orderId), TipRequest(amount, note?.trim()?.ifEmpty { null }))
             Unit
         }
-    }
 
     /** « Remise » on an open check (fixed | percent); [type] null takes it off. */
     suspend fun setDiscount(orderId: Long, type: String?, value: Double?, code: String? = null): Result<CheckChange> {

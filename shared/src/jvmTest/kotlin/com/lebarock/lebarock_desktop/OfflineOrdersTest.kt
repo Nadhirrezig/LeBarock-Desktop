@@ -251,12 +251,11 @@ class OfflineOrdersTest {
         offlineWithCopy()
         // O4c: move, merge and split work offline now (OfflineTableOpsTest).
         val refusals = listOf(
-            orders.tip(812, 2.0, null),
             orders.releaseTable(2),
             orders.customers("Sami"),
         ).map { it.exceptionOrNull() as ApiFailure }
-        assertEquals("Hors ligne : ajouter un pourboire n'est pas possible tant que la caisse ne répond pas.", refusals[0].message)
-        assertEquals("Hors ligne : libérer une table n'est pas possible tant que la caisse ne répond pas.", refusals[1].message)
+        // O4d: the tip works offline now (OfflineCheckEditsTest).
+        assertEquals("Hors ligne : libérer une table n'est pas possible tant que la caisse ne répond pas.", refusals[0].message)
         assertTrue(refusals.all { it.code == OfflineOrders.OFFLINE_CODE && it.message!!.startsWith("Hors ligne : ") })
 
         // O4b: cancel and the cart's charges ask the manager's PIN instead.

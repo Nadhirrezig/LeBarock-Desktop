@@ -31,6 +31,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonPrimitive
 import mockwebserver3.MockWebServer
 import java.io.File
@@ -137,6 +138,37 @@ class OfflineCheckEditsTest {
         // Taken off: no code.
         assertEquals(35.2, orders.setDiscount(812, null, null).getOrThrow().order.total)
         assertNull(data("order.discount")["authorized_by"])
+    }
+
+    @Test
+    fun a_tip_offline_follows_the_setting_needs_no_pin_and_replaces_the_tip() = runBlocking<Unit> {
+        ready()
+        // The copy says the restaurant does not take tips at the POS: refused, as online.
+        assertFalse(orders.paymentContext(812).getOrThrow().canAddTip)
+        assertEquals("Le pourboire n'est pas autorisé.", orders.tip(812, 2.0, null).exceptionOrNull()!!.message)
+
+        store.saveSnapshotPart(SnapshotPartEntity("static", "v2", 0, 0, static.replace("\"name\":\"Le Baroque\",", "\"name\":\"Le Baroque\",\"tip_pos\":true,"), clock.addAndGet(1_000)))
+        assertTrue(orders.paymentContext(812).getOrThrow().canAddTip)
+
+        // O4d (client, 2026-11-11): no PIN; the total follows; sent as order.tip by the « Hors ligne » account.
+        assertTrue(orders.tip(812, 2.5, "  Merci ").isSuccess)
+        val context = orders.paymentContext(812).getOrThrow()
+        assertEquals(2.5, context.tipAmount)
+        assertEquals("Merci", context.tipNote)
+        assertEquals(37.7, context.total)
+        val sent = data("order.tip")
+        assertEquals(2.5, sent["amount"]!!.jsonPrimitive.double)
+        assertEquals("Merci", sent["note"]!!.jsonPrimitive.content)
+        assertNull(sent["authorized_by"], "no PIN")
+        assertEquals(9L, commands().last().actorId)
+
+        // Replaced, then taken off.
+        assertTrue(orders.tip(812, 1.0, null).isSuccess)
+        assertEquals(36.2, orders.orderDetail(812).getOrThrow().total)
+        assertTrue(orders.tip(812, 0.0, null).isSuccess)
+        assertEquals(35.2, orders.orderDetail(812).getOrThrow().total)
+        assertNull(orders.paymentContext(812).getOrThrow().tipNote)
+        assertEquals(3, commands().count { it.type == "order.tip" })
     }
 
     @Test

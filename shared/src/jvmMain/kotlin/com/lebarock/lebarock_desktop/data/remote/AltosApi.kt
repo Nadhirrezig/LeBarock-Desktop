@@ -185,12 +185,19 @@ interface AltosApi {
 
     // ---- Offline mode: the caisse's sync API (the handheld's calls) ----
 
-    /** Signed in: the account's token (a device key is issued); with nobody signed in: the device key alone. */
+    /**
+     * The device key alone (O4a); a PC without one registers with the branch's « Clé de synchronisation » ([enrolKey])
+     * or, as before, a signed-in account's token: the caisse then issues its key.
+     */
     @POST("api/sync/heartbeat")
-    suspend fun heartbeat(@Body body: HeartbeatRequest, @Header("X-Sync-Key") syncKey: String?): Envelope<HeartbeatData>
+    suspend fun heartbeat(
+        @Body body: HeartbeatRequest,
+        @Header("X-Sync-Key") syncKey: String?,
+        @Header("X-Sync-Enrol") enrolKey: String? = null,
+    ): Envelope<HeartbeatData>
 
-    /** Needs the signed-in token and the device key; 304 when the static part is unchanged. */
-    @GET("api/sync/snapshot")
+    /** The branch's copy with the device key alone, signed in or not (O4a); 304 when the static part is unchanged. */
+    @GET("api/sync/branch-snapshot")
     suspend fun snapshot(
         @Query("parts") parts: String,
         @Header("X-Device-Uuid") deviceUuid: String,

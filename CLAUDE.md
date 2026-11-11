@@ -19,7 +19,7 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   kotlinx.serialization, material-icons-extended, JNA (Windows DPAPI and registry), sqlite-jdbc (the offline store; the
   installed app needs the `java.sql` module, set in `desktopApp/build.gradle.kts`).
 - Modules: `shared` (all app code `src/jvmMain`, tests `src/jvmTest`), `desktopApp` (window, tray, installer settings).
-- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**117 tests**, 2026-11-10).
+- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**119 tests**, 2026-11-11).
 - Installer: `gradlew :desktopApp:packageMsi` **on Windows** → `desktopApp/build/compose/binaries/main/msi/AltosPOS-x.y.z.msi`.
   Raise `altospos.version` for each release (MAJOR.MINOR.BUILD); `upgradeUuid` never changes.
 - Data folder `%APPDATA%\AltosPOS` (`settings.json`, `offline.db`, `logs\`, `certs\`, `cache\images`, lock file);
@@ -73,9 +73,12 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   `payment.split`), behind the manager's payment PIN typed once per check, valid 5 minutes** (client, 2026-11-10);
   whoever is signed in (the caisse takes « Hors ligne » payments only with it); no credit, no tip; the receipt prints on
   this PC. **The caisse back during a « Hors ligne » session, everything sent → « La caisse répond à nouveau » window →
-  sign-in** (client, 2026-11-10, as the handheld). **The copy is as fresh as the last moment an
-  account was signed in** (the caisse gives it to a signed-in account only; no caisse change — rejected for now: the
-  copy given to the device key while the PC is locked). The caisse's `order.remove_line` only covers lines waiting for
+  sign-in** (client, 2026-11-10, as the handheld). **O4a (client, 2026-11-11): everything syncs with the PC's
+  key alone, signed in or not** (locked, in the tray): the PC registers once with the branch's « Clé de
+  synchronisation » typed in Réglages → Mode hors ligne (or, as before, at a sign-in); the copy is **the branch's: every
+  Caisse** with its menu and « Hors ligne » PIN check, fresh within 30 s; **the PIN typed at « Connexion hors ligne »
+  decides the Caisse** (menu, take-away checks, « Hors ligne » account); a signed-in account uses its own Caisse. The
+  key field keeps what is typed (adding dashes while typing moved the cursor). The caisse's `order.remove_line` only covers lines waiting for
   stock: not used (as on the handheld).
 - **Not included:** cash drawer, customer display, barcode, kitchen screen, waiter notifications, QR approvals.
 
@@ -143,14 +146,18 @@ USB printing through a Windows driver, tray and registry — the client's test.
 
 - [x] D1–D6 built (2026-11-08 → 2026-11-10).
 - [ ] Client tests D4, D5, D6 on the counter PC.
-- [ ] **D7 wrap-up**: CLAUDE.md files, deployment branches.
 - [x] **Offline O1** foundation (2026-11-10) — client to test: PC code in Réglages, copy downloaded, banner when the
       caisse is stopped.
 - [x] **Offline O2** orders offline (2026-11-10) — client to test: sign in, stop the caisse, take an order on a table,
       a round, « Imprimer Ticket »; start the caisse: the check appears with its D1 number.
 - [x] **Offline O3** « Hors ligne » sign-in and payment (2026-11-10) — client to test on the counter PC: stop the caisse,
       « Connexion hors ligne », an order paid in cash with the payment PIN, the caisse back (session open on the Caisse).
-- [ ] **MSI release — last**, after the offline mode (client, 2026-11-10).
+- [x] **Offline O4a** key-only sync (2026-11-11) — client to test: Réglages → Mode hors ligne, type the key from the
+      caisse (Paramètres → Mode hors ligne), nobody signed in: « Caisse PC D1 » and the copy of every Caisse.
+- [ ] **Offline O4b** check edits offline (discount, cancel, line taken off, waiter, charge) behind the payment PIN.
+- [ ] **Offline O4c** table operations offline (move, merge, split).
+- [ ] **Offline O4d** tip offline. Credit, customer, Caisse page and expenses stay online (client, 2026-11-11).
+- [ ] **D7 wrap-up** after O4 (CLAUDE.md files, deployment branches), then **MSI release — last** (client, 2026-11-10).
 
 ## Open questions
 
@@ -162,3 +169,7 @@ USB printing through a Windows driver, tray and registry — the client's test.
 - 2026-11-10 — D4 reviewed and fixed; D5 and D6 built. Order changed by the client: offline mode, then the MSI last.
   Z count: « Reste (pièces) » amount added; movement names follow the web. Offline mode: scope and steps agreed, O1
   (foundation), O2 (orders offline) and O3 (« Hors ligne » sign-in, payment PIN) built and run against the caisse.
+- 2026-11-11 — O4 agreed before D7 (check edits, table operations, tip offline; desktop and handheld). O4a built: key
+  only sync, branch copy, PIN picks the Caisse. Run end to end: fresh PC registered signed out, PIN and price changes
+  reached it within 30 s, old PIN refused, Counter 2's PIN → Counter 2's menu (Mojito only), order D1-001 on T2
+  recorded as « Hors ligne — Counter 2 ». Found: the key field moved the cursor when it added dashes (fixed).

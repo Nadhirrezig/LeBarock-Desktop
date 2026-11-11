@@ -91,7 +91,7 @@ class OfflineFoundationTest {
         val b = first.enqueue({ error("the device exists") }) { d -> action("b", d.nextSeq) }
         assertEquals(listOf(1L, 2L), listOf(a.seq, b.seq))
         first.saveSnapshotPart(SnapshotPartEntity("static", "v1", 2, 4, """{"menu":{"items":[]}}""", 5_000))
-        first.saveOfflineAccess(OfflineAccess(9, "Hors ligne", "aes:pin", null, 2, "Counter 1", 1))
+        first.saveOfflineAccesses(listOf(OfflineAccess(9, "Hors ligne", "aes:pin", null, 2, "Counter 1", 1), OfflineAccess(11, "Hors ligne Bar", "aes:pin2", null, 3, "Bar", 0)))
         first.close()
 
         val again = store(file)
@@ -100,7 +100,8 @@ class OfflineFoundationTest {
         assertEquals(2, again.outboxSize())
         assertEquals(1_001L, again.oldestOutbox())
         assertEquals("v1", again.snapshotPart("static")!!.version)
-        assertEquals("Hors ligne", again.offlineAccess()!!.accountName)
+        assertEquals(listOf("Bar", "Counter 1"), again.offlineAccesses().map { it.caisseName }, "one PIN check per Caisse (O4a)")
+        assertEquals("Hors ligne", again.offlineAccess(2)!!.accountName)
         assertEquals(2, again.outboxCount().first(), "the flows read the file")
     }
 
@@ -118,7 +119,7 @@ class OfflineFoundationTest {
 
         s.insertOutbox(action("a", 1))
         s.saveSnapshotPart(SnapshotPartEntity("static", "v1", 2, 4, "{}", 1))
-        s.saveOfflineAccess(OfflineAccess(9, "Hors ligne", "aes:pin", "aes:pay", 2, "Counter 1", 1))
+        s.saveOfflineAccesses(listOf(OfflineAccess(9, "Hors ligne", "aes:pin", "aes:pay", 2, "Counter 1", 1)))
         s.saveReview(ReviewItemEntity("r", 7, "payment.tender", "refused", "paid", "Déjà payée.", "Paiement", "2026-11-10T20:00:00Z", "{}", null, 1))
         s.clearCopy()
         assertNull(s.snapshotPart("static"))
@@ -222,10 +223,13 @@ class OfflineFoundationTest {
             "snapshot_version":"v1","snapshot_stale":$stale,"waiting":[]${key?.let { ""","sync_key":"$it"""" } ?: ""}$extra}}""",
     )
 
-    private val static = """{"device":{"code":"D1"},"caisse":{"id":2,"name":"Counter 1","menu_id":1},
-        "menu":{"items":[{"id":1,"name":"Coca"},{"id":2,"name":"Café"}]},
+    /** The branch's copy (O4a): two Caisses, each with its « Hors ligne » account. */
+    private val static = """{"format":2,"device":{"code":"D1"},
+        "caisses":[{"id":2,"name":"Counter 1","menu_id":1,"offline_account":{"id":9,"name":"Hors ligne Counter 1","verifier":"pbkdf2-sha256${'$'}100000${'$'}c2FsdA==${'$'}aGFzaA=="}},
+                   {"id":3,"name":"Bar","menu_id":null,"offline_account":{"id":11,"name":"Hors ligne Bar","verifier":"pbkdf2-sha256${'$'}100000${'$'}YmFy${'$'}YmFyMg=="}}],
+        "menu":{"items":[{"id":1,"name":"Coca","menu_id":1},{"id":2,"name":"Café","menu_id":1}]},
         "areas":[{"id":1,"name":"Salle","tables":[{"id":1,"code":"1"},{"id":2,"code":"2"}]},{"id":2,"name":"Terrasse","tables":[{"id":3,"code":"T1"}]}],
-        "offline":{"account":{"id":9,"name":"Hors ligne Counter 1","verifier":"pbkdf2-sha256${'$'}100000${'$'}c2FsdA==${'$'}aGFzaA=="},"payment_pin":"pbkdf2-sha256${'$'}100000${'$'}cGF5${'$'}cGlu"}}"""
+        "offline":{"payment_pin":"pbkdf2-sha256${'$'}100000${'$'}cGF5${'$'}cGlu"}}"""
 
     private val checks = """{"generated_at":"2026-11-10T20:00:00+00:00",
         "open_checks":[{"id":812,"order_number":"812","table":{"id":1,"code":"1"},"status":"kot","total":18.5},{"id":813,"order_number":813,"offline_number":"H1-004","status":"billed","total":7}],
@@ -281,24 +285,60 @@ class OfflineFoundationTest {
         assertEquals("k3y", alone.headers["X-Sync-Key"])
         assertNull(alone.headers["Authorization"], "the device key alone")
         eventually("active with its key") { sync.status.value.active }
+        // O4a: the copy too, with the key alone.
+        answer("/api/sync/branch-snapshot", json("""{"status":"success","data":{"branch_id":1,"version":"v1","static":$static,"checks":$checks}}"""))
         sync.refreshSnapshot("static,checks")
-        assertEquals(0, sent("/api/sync/snapshot").size, "the copy is given to a signed-in account only")
+        val copy = sent("/api/sync/branch-snapshot").single()
+        assertEquals("k3y", copy.headers["X-Sync-Key"])
+        assertNull(copy.headers["Authorization"], "no account needed for the copy")
+        assertEquals(2, db.offlineAccesses().size)
 
         // The caisse no longer knows the key: said in Réglages and on the banner once something waits.
         answer("/api/sync/heartbeat", json("""{"status":"error","code":"unauthenticated","message":"Appareil non reconnu."}""", 401))
         sync.heartbeat()
         assertTrue(db.device()!!.keyRefused)
         eventually("key refused") { sync.status.value.keyRefused }
-        assertEquals("clé refusée : connectez-vous une fois en ligne", OfflineModel.stateLine(sync.status.value))
+        assertEquals("clé refusée : enregistrez ce poste à nouveau avec la clé de synchronisation", OfflineModel.stateLine(sync.status.value))
+    }
+
+    @Test
+    fun the_branch_key_registers_this_pc_without_any_sign_in() = runBlocking<Unit> {
+        sessions.clear()
+
+        // Wrong key: the caisse's French message, nothing kept.
+        answer("/api/sync/heartbeat", json("""{"status":"error","code":"enrol_key_wrong","message":"Clé de synchronisation incorrecte : recopiez celle de la caisse (Paramètres → Mode hors ligne)."}""", 401))
+        val wrong = sync.enrol("aaaa bbbb cccc")
+        assertEquals("Clé de synchronisation incorrecte : recopiez celle de la caisse (Paramètres → Mode hors ligne).", wrong.exceptionOrNull()?.message)
+        assertEquals("AAAA-BBBB-CCCC", sent("/api/sync/heartbeat").single().headers["X-Sync-Enrol"], "typed loosely, sent as the caisse shows it")
+        assertNull(db.device()!!.syncKeySealed)
+        assertEquals("La clé compte 12 lettres et chiffres (ex. K7QM-2XRT-9HPB).", sync.enrol("K7QM").exceptionOrNull()?.message)
+
+        // The right key: the PC's own key, then the copy with it.
+        answer("/api/sync/heartbeat", heartbeat())
+        answer("/api/sync/branch-snapshot", json("""{"status":"success","data":{"branch_id":1,"version":"v1","static":$static,"checks":$checks}}"""))
+        assertEquals("D1", sync.enrol("K7QM-2XRT-9HPB").getOrThrow())
+        val enrolled = sent("/api/sync/heartbeat")[1]
+        assertNull(enrolled.headers["Authorization"])
+        assertNull(enrolled.headers["X-Sync-Key"])
+        assertEquals(2, Json.parseToJsonElement(enrolled.body!!.utf8()).jsonObject["snapshot_format"]!!.jsonPrimitive.content.toInt())
+        assertEquals("k3y-from-the-caisse", secrets.open(db.device()!!.syncKeySealed))
+        assertEquals("k3y-from-the-caisse", sent("/api/sync/branch-snapshot").single().headers["X-Sync-Key"])
+        assertNotNull(db.snapshotPart("static"))
+        eventually("registered") { sync.status.value.registered && sync.status.value.active }
+
+        // Registered again (a new key from the caisse): the old key works until the new one comes.
+        answer("/api/sync/heartbeat", json("""{"status":"error","code":"enrol_key_wrong","message":"Clé incorrecte."}""", 401))
+        assertTrue(sync.enrol("K7QM-2XRT-0000").isFailure)
+        assertEquals("k3y-from-the-caisse", secrets.open(db.device()!!.syncKeySealed), "a failed try keeps the working key")
     }
 
     @Test
     fun the_copy_is_stored_without_the_pin_checks() = runBlocking<Unit> {
         answer("/api/sync/heartbeat", heartbeat())
-        answer("/api/sync/snapshot", json("""{"status":"success","data":{"caisse_id":2,"version":"v1","static":$static,"checks":$checks}}"""))
+        answer("/api/sync/branch-snapshot", json("""{"status":"success","data":{"branch_id":1,"version":"v1","static":$static,"checks":$checks}}"""))
         sync.refreshSnapshot("static,checks")
 
-        val asked = sent("/api/sync/snapshot").single()
+        val asked = sent("/api/sync/branch-snapshot").single()
         assertEquals("static,checks", asked.url.queryParameter("parts"))
         assertEquals(db.device()!!.uuid, asked.headers["X-Device-Uuid"])
         assertEquals("k3y-from-the-caisse", asked.headers["X-Sync-Key"], "the heartbeat came first: the PC had no key")
@@ -306,14 +346,14 @@ class OfflineFoundationTest {
 
         val stored = db.snapshotPart("static")!!
         assertEquals("v1", stored.version)
-        assertEquals(2L, stored.caisseId)
-        assertEquals(4L, stored.userId)
+        assertEquals(0L, stored.caisseId, "the branch's copy: every Caisse")
         assertFalse("pbkdf2" in stored.json, "the PIN checks are not in the copy")
-        val offline = Json.parseToJsonElement(stored.json).jsonObject["offline"]!!.jsonObject
-        assertEquals("Hors ligne Counter 1", offline["account"]!!.jsonObject["name"]!!.jsonPrimitive.content, "orders will be recorded as it")
-        val access = db.offlineAccess()!!
+        val caisses = Json.parseToJsonElement(stored.json).jsonObject["caisses"]!!.jsonArray
+        assertEquals("Hors ligne Counter 1", caisses[0].jsonObject["offline_account"]!!.jsonObject["name"]!!.jsonPrimitive.content, "orders will be recorded as it")
+        val access = db.offlineAccess(2)!!
         assertEquals(9L, access.accountId)
         assertEquals("Counter 1", access.caisseName)
+        assertEquals(11L, db.offlineAccess(3)!!.accountId)
         assertFalse("pbkdf2" in access.accountVerifierSealed!!)
         assertTrue(secrets.open(access.accountVerifierSealed)!!.startsWith("pbkdf2-sha256$100000$"))
         assertTrue(secrets.open(access.paymentVerifierSealed)!!.startsWith("pbkdf2-sha256$"))
@@ -325,25 +365,25 @@ class OfflineFoundationTest {
         assertEquals(listOf("running", "available"), db.tableStates().map { it.status })
         eventually("Réglages shows the copy") { sync.snapshot.value.openChecks == 2 && sync.snapshot.value.items == 2 }
         assertEquals(3, sync.snapshot.value.tables)
-        assertTrue(OfflineModel.copyLine(sync.snapshot.value).startsWith("2 articles, 3 tables, 2 commandes ouvertes · Counter 1 — "))
+        assertTrue(OfflineModel.copyLine(sync.snapshot.value).startsWith("2 articles, 3 tables, 2 commandes ouvertes · Counter 1, Bar — "))
         assertEquals("pas encore téléchargées", OfflineModel.copyLine(com.lebarock.lebarock_desktop.data.offline.SnapshotSummary()))
 
         // Unchanged: asked with its version, nothing downloaded again.
-        answer("/api/sync/snapshot", MockResponse.Builder().code(304).build())
+        answer("/api/sync/branch-snapshot", MockResponse.Builder().code(304).build())
         sync.refreshSnapshot("static")
-        assertEquals("\"v1\"", sent("/api/sync/snapshot")[1].headers["If-None-Match"])
+        assertEquals("\"v1\"", sent("/api/sync/branch-snapshot")[1].headers["If-None-Match"])
         assertEquals("v1", db.snapshotPart("static")!!.version)
 
         // The checks alone, every 30 s: the list is replaced.
-        answer("/api/sync/snapshot", json("""{"status":"success","data":{"caisse_id":2,"checks":{"open_checks":[],"tables":[]}}}"""))
+        answer("/api/sync/branch-snapshot", json("""{"status":"success","data":{"branch_id":1,"checks":{"open_checks":[],"tables":[]}}}"""))
         sync.refreshSnapshot("checks")
         assertEquals(emptyList(), db.openChecks())
         assertNotNull(db.snapshotPart("static"), "the menu stays")
 
         // The caisse dropped the offline PIN: nothing is kept of it here.
-        answer("/api/sync/snapshot", json("""{"status":"success","data":{"caisse_id":2,"version":"v2","static":{"caisse":{"id":2,"name":"Counter 1"},"offline":{"account":null,"payment_pin":null}}}}"""))
+        answer("/api/sync/branch-snapshot", json("""{"status":"success","data":{"branch_id":1,"version":"v2","static":{"format":2,"caisses":[{"id":2,"name":"Counter 1","offline_account":null}],"offline":{"payment_pin":null}}}}"""))
         sync.refreshSnapshot("static")
-        assertNull(db.offlineAccess())
+        assertEquals(emptyList(), db.offlineAccesses())
         assertEquals("v2", db.snapshotPart("static")!!.version)
     }
 
@@ -368,7 +408,7 @@ class OfflineFoundationTest {
                 {"id":"${c.id}","seq":3,"type":"order.bill","status":"retry"}]}}""",
             ),
         )
-        answer("/api/sync/snapshot", json("""{"status":"success","data":{"caisse_id":2,"checks":$checks}}"""))
+        answer("/api/sync/branch-snapshot", json("""{"status":"success","data":{"branch_id":1,"checks":$checks}}"""))
         sync.push()
 
         val batch = sent("/api/sync/batch").single()
@@ -394,7 +434,7 @@ class OfflineFoundationTest {
         assertTrue(db.device()!!.keyRefused)
         assertEquals(1, db.nextOutbox(1).single().attempts)
         eventually("the banner says it") { sync.status.value.keyRefused }
-        assertEquals("Synchronisation impossible : connectez-vous une fois en ligne sur ce poste (1 action en attente).", bannerText(sync.status.value))
+        assertEquals("Synchronisation impossible : enregistrez ce poste avec la clé de synchronisation (Réglages → Mode hors ligne) (1 action en attente).", bannerText(sync.status.value))
 
         // A new sign-in gives a new key: the last action goes, the copy can be erased.
         answer("/api/sync/heartbeat", heartbeat(key = "n3w-key"))

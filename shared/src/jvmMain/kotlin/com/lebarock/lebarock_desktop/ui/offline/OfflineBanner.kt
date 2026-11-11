@@ -33,7 +33,7 @@ fun bannerText(status: OfflineStatus): String? {
     }
     return when {
         status.offline -> "Hors ligne — $actions"
-        status.keyRefused && status.pending > 0 -> "Synchronisation impossible : connectez-vous une fois en ligne sur ce poste ($actions)."
+        status.keyRefused && status.pending > 0 -> "Synchronisation impossible : enregistrez ce poste avec la clé de synchronisation (Réglages → Mode hors ligne) ($actions)."
         status.syncing -> "Synchronisation… ($actions)"
         else -> null
     }

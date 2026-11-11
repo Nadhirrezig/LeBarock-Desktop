@@ -20,6 +20,8 @@ data class HeartbeatRequest(
     @SerialName("pending_count") val pendingCount: Int = 0,
     @SerialName("oldest_pending_at") val oldestPendingAt: String? = null,
     @SerialName("snapshot_version") val snapshotVersion: String? = null,
+    /** O4a: this PC holds the branch's copy (GET /api/sync/branch-snapshot). Always written out. */
+    @SerialName("snapshot_format") val snapshotFormat: Int,
 )
 
 @Serializable
@@ -50,10 +52,13 @@ data class HeartbeatData(
     @SerialName("sync_key") val syncKey: String? = null,
 )
 
-/** GET /api/sync/snapshot: "static" only when it changed since [version] (else [staticUnchanged]). */
+/**
+ * GET /api/sync/branch-snapshot (O4a, the device key alone): "static" only when it changed since [version] (else
+ * [staticUnchanged]); it holds every Caisse of the branch.
+ */
 @Serializable
 data class SnapshotData(
-    @SerialName("caisse_id") val caisseId: Long = 0,
+    @SerialName("branch_id") val branchId: Long = 0,
     val version: String? = null,
     @SerialName("static_unchanged") val staticUnchanged: Boolean = false,
     val static: JsonObject? = null,

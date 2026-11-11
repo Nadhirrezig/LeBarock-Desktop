@@ -113,8 +113,8 @@ class OfflinePaymentTest {
         store.saveSnapshotPart(SnapshotPartEntity("static", "v1", 2, 4, static, clock.get()))
         store.replaceChecks(SnapshotPartEntity("checks", null, 2, 4, "{}", clock.get()), listOf(OpenCheckEntity(812, "812", null, 1, "billed", 12.0, check812, clock.get())), emptyList())
         store.updateDevice({ DeviceStateEntity(uuid = "pc-1") }) { it.copy(code = "D1") }
-        store.saveOfflineAccess(
-            OfflineAccess(9, "Hors ligne — Counter 1", secrets.seal(verifier("2468")), if (paymentPin) secrets.seal(verifier("1357")) else null, 2, "Counter 1", 1),
+        store.saveOfflineAccesses(
+            listOf(OfflineAccess(9, "Hors ligne — Counter 1", secrets.seal(verifier("2468")), if (paymentPin) secrets.seal(verifier("1357")) else null, 2, "Counter 1", 1)),
         )
     }
 
@@ -262,6 +262,52 @@ class OfflinePaymentTest {
         assertEquals("equal", data("payment.split")["type"]!!.jsonPrimitive.content)
     }
 
+    /** O4a: the branch's copy — two Caisses, each with its own menu, « Hors ligne » account and PIN. */
+    private val branchStatic = """{"format":2,"device":{"code":"D1"},
+        "caisses":[{"id":2,"name":"Counter 1","menu_id":1,"offline_account":{"id":9,"name":"Hors ligne — Counter 1"}},
+                   {"id":3,"name":"Bar","menu_id":2,"offline_account":{"id":11,"name":"Hors ligne — Bar"}}],
+        "restaurant":{"name":"Le Baroque","currency":{"symbol":"DT","position":"right_with_space","decimals":3},"labels":{"cash":"Espèces","card":"Carte"}},
+        "taxes":[],"charges":[],
+        "menu":{"items":[{"id":11,"name":"Pizza","price":20,"menu_id":1,"kot_place_id":1},{"id":21,"name":"Mojito","price":15,"menu_id":2}]},
+        "menus":[{"id":1,"name":"Restaurant","items_count":1},{"id":2,"name":"Bar","items_count":1}],
+        "areas":[{"id":1,"name":"Salle","tables":[{"id":1,"code":"1"},{"id":2,"code":"2"}]}],
+        "stations":[{"id":1,"name":"Cuisine"}],
+        "offline":{}}"""
+
+    @Test
+    fun the_pin_typed_decides_the_caisse_of_the_branch_copy() = runBlocking<Unit> {
+        val away = { id: Long, caisse: Long -> OpenCheckEntity(id, "$id", null, null, "billed", 6.0,
+            """{"id":$id,"order_number":"$id","order_type":"pickup","status":"billed","total":6,"caisse_id":$caisse,"items":[]}""", clock.get()) }
+        store.saveSnapshotPart(SnapshotPartEntity("static", "v1", 0, 0, branchStatic, clock.get()))
+        store.replaceChecks(
+            SnapshotPartEntity("checks", null, 0, 0, "{}", clock.get()),
+            listOf(OpenCheckEntity(812, "812", null, 1, "billed", 12.0, check812, clock.get()), away(901, 2), away(902, 3)),
+            emptyList(),
+        )
+        store.updateDevice({ DeviceStateEntity(uuid = "pc-1") }) { it.copy(code = "D1") }
+        store.saveOfflineAccesses(listOf(
+            OfflineAccess(9, "Hors ligne — Counter 1", secrets.seal(verifier("2468")), secrets.seal(verifier("1357")), 2, "Counter 1", 1),
+            OfflineAccess(11, "Hors ligne — Bar", secrets.seal(verifier("8642")), secrets.seal(verifier("1357")), 3, "Bar", 2),
+        ))
+
+        // The Bar's PIN: the Bar's « Hors ligne » account, its menu, its take-away checks and every table's.
+        val session = repository.signInOffline(pins, "8642").getOrThrow()
+        assertEquals(11L, session.user.id)
+        assertEquals(3L, session.caisse?.id)
+        assertEquals(listOf("Mojito"), orders.menuItems(null).getOrThrow().map { it.name })
+        assertEquals(listOf(2L), orders.menus().getOrThrow().map { it.id })
+        assertEquals(setOf(812L, 902L), orders.orders(null, false).getOrThrow().data.map { it.id }.toSet())
+
+        // Counter 1's PIN: its own.
+        sessions.clear()
+        assertEquals(9L, repository.signInOffline(pins, "2468").getOrThrow().user.id)
+        assertEquals(listOf("Pizza"), orders.menuItems(null).getOrThrow().map { it.name })
+        assertEquals(setOf(812L, 901L), orders.orders(null, false).getOrThrow().data.map { it.id }.toSet())
+
+        // A PIN of no Caisse.
+        assertEquals(OfflinePins.WRONG, repository.signInOffline(pins, "9999").exceptionOrNull()!!.message)
+    }
+
     @Test
     fun credit_and_a_missing_payment_pin_are_refused() = runBlocking<Unit> {
         ready(paymentPin = false)
@@ -270,7 +316,7 @@ class OfflinePaymentTest {
         assertEquals(OfflinePins.NO_PAYMENT_PIN, orders.unlockOfflinePayment(812, "1357").exceptionOrNull()!!.message)
 
         // A cashier signed in before the outage pays offline too, behind the same PIN (recorded as « Hors ligne »).
-        store.saveOfflineAccess(OfflineAccess(9, "Hors ligne — Counter 1", secrets.seal(verifier("2468")), secrets.seal(verifier("1357")), 2, "Counter 1", 1))
+        store.saveOfflineAccesses(listOf(OfflineAccess(9, "Hors ligne — Counter 1", secrets.seal(verifier("2468")), secrets.seal(verifier("1357")), 2, "Counter 1", 1)))
         orders.unlockOfflinePayment(812, "1357").getOrThrow()
         val credit = orders.pay(812, PaymentRequest(method = "due", customerName = "Sami", customerPhone = "22000000")).exceptionOrNull()!!
         assertEquals("Hors ligne, le paiement se fait en espèces ou par carte (pas de paiement à crédit).", credit.message)

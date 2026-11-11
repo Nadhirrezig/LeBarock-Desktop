@@ -44,13 +44,15 @@ import java.util.UUID
 
 /** What the banner and Réglages show of the offline mode. */
 data class OfflineStatus(
-    /** Offline mode applies: a counter account is signed in, or this PC holds a device key from an earlier one. */
+    /** Offline mode applies: this PC holds its device key (O4a), or a counter account is signed in to get one. */
     val active: Boolean = false,
     val offline: Boolean = false,
     val syncing: Boolean = false,
     val pending: Int = 0,
-    /** The caisse refused this PC's key: someone must sign in online once. */
+    /** The caisse refused this PC's key: register it again with the sync key (Réglages → Mode hors ligne). */
     val keyRefused: Boolean = false,
+    /** This PC has its device key (registered at the caisse). */
+    val registered: Boolean = false,
 )
 
 /** The copy this PC holds, for Réglages. */
@@ -65,14 +67,14 @@ data class SnapshotSummary(
 
 /**
  * Offline mode, desktop step 1 — the handheld's OfflineSync on this PC: keeps it known to the caisse (heartbeat,
- * device code « D1 », sync key), keeps its copy fresh while an account is signed in (snapshot: menu, tables, open
- * checks), notices when the caisse stops answering, and sends the outbox in order when it answers again. Results the
- * caisse refused or set aside go to « À vérifier » with its French message. Step 2 fills the outbox (orders taken
- * offline), step 3 adds the « Hors ligne » sign-in and the payments.
+ * device code « D1 », sync key), keeps its copy fresh (snapshot: menu, tables, open checks), notices when the caisse
+ * stops answering, and sends the outbox in order when it answers again. Results the caisse refused or set aside go to
+ * « À vérifier » with its French message. Step 2 fills the outbox (orders taken offline), step 3 adds the « Hors
+ * ligne » sign-in and the payments.
  *
- * The desktop's session lives in memory and closes when the counter is idle: with nobody signed in the PC still
- * says it is there and still sends what waits (the device key alone), but the caisse gives the copy to a signed-in
- * account only, so the copy is as fresh as the last moment someone was signed in (client, 2026-11-10: as the handheld).
+ * O4a (client, 2026-11-11): everything works with the device key alone, signed in or not (locked, in the tray). The
+ * PC gets its key once with the branch's « Clé de synchronisation » typed in Réglages ([enrol]), or as before when a
+ * counter account signs in. The copy is the branch's: every Caisse, its menu and its « Hors ligne » PIN check.
  */
 class OfflineSync(
     private val store: OfflineStore,
@@ -106,15 +108,15 @@ class OfflineSync(
     /** A counter account (not a kitchen-only one, which has nothing to do on this PC). */
     private fun counter(session: Session?): Boolean = session != null && !session.rights.kitchenOnly
 
-    /** Offline mode applies: a counter account signed in; with nobody signed in, a device key still syncs the outbox. */
+    /** Offline mode applies: the device key (O4a, signed in or not), or a counter account signed in to get one. */
     private val activeFlow = combine(sessions.session, store.deviceFlow()) { session, device ->
-        counter(session) || (session == null && device?.syncKeySealed != null)
+        device?.syncKeySealed != null || counter(session)
     }
 
     val status: StateFlow<OfflineStatus> = combine(
         activeFlow, monitor.offline, syncing, store.outboxCount(), store.deviceFlow(),
     ) { active, offline, isSyncing, pending, device ->
-        OfflineStatus(active, offline, isSyncing, pending, device?.keyRefused == true)
+        OfflineStatus(active, offline, isSyncing, pending, device?.keyRefused == true, device?.syncKeySealed != null)
     }.stateIn(scope, SharingStarted.Eagerly, OfflineStatus())
 
     val deviceCode: StateFlow<String?> = store.deviceFlow().map { it?.code }.stateIn(scope, SharingStarted.Eagerly, null)
@@ -141,7 +143,7 @@ class OfflineSync(
         if (started) return
         started = true
 
-        // A counter account signs in: the PC registers, gets its key, takes a full copy.
+        // A counter account signs in: the PC registers if it has no key yet, and catches up at once.
         scope.launch {
             sessions.session
                 .map { if (counter(it)) it?.user?.id ?: 0L else 0L }
@@ -173,7 +175,7 @@ class OfflineSync(
             }
         }
 
-        // Open checks: every 30 s while signed in and online.
+        // Open checks: every 30 s while online, signed in or not (O4a: the device key alone).
         scope.launch {
             while (true) {
                 delay(CHECKS_MS)
@@ -374,15 +376,52 @@ class OfflineSync(
     // ---------------------------------------------------------------- heartbeat
 
     suspend fun heartbeat() {
+        heartbeat(enrolKey = null)
+    }
+
+    /**
+     * Registers this PC with the branch's « Clé de synchronisation » (Réglages → Mode hors ligne): the caisse gives it
+     * its own key, then takes the copy. The caisse's French message when it refuses.
+     */
+    suspend fun enrol(branchKey: String): Result<String> {
+        if (api() == null) return Result.failure(IllegalStateException("Renseignez d'abord l'adresse de la caisse (Réglages → Serveur)."))
+        val typed = branchKey.filter { it.isLetterOrDigit() }.uppercase()
+        if (typed.length != 12) return Result.failure(IllegalStateException("La clé compte 12 lettres et chiffres (ex. K7QM-2XRT-9HPB)."))
+        val before = ensureDevice().syncKeySealed
+        return try {
+            // Sent without the key this PC may hold: the caisse issues a new one (the old one works until then).
+            heartbeat(enrolKey = typed.chunked(4).joinToString("-"))
+            val device = ensureDevice()
+            if (device.syncKeySealed == null || device.syncKeySealed == before) {
+                Result.failure(IllegalStateException("La caisse n'a pas répondu : réessayez quand elle répond."))
+            } else {
+                AppLog.info("Mode hors ligne : ce poste est enregistré sur la caisse (« Caisse PC ${device.code} »)")
+                runCatching { refreshSnapshot("static,checks") }
+                Result.success(device.code ?: "")
+            }
+        } catch (e: HttpException) {
+            Result.failure(IllegalStateException(errorMessage(e) ?: "Clé de synchronisation refusée par la caisse."))
+        } catch (e: IOException) {
+            Result.failure(IllegalStateException("La caisse ne répond pas : réessayez quand elle répond."))
+        }
+    }
+
+    private fun errorMessage(e: HttpException): String? = runCatching {
+        val body = e.response()?.errorBody()?.string() ?: return@runCatching null
+        (json.parseToJsonElement(body).jsonObject["message"] as? JsonPrimitive)?.contentOrNull
+    }.getOrNull()
+
+    /** [enrolKey]: only from [enrol]; its errors go back to it. */
+    private suspend fun heartbeat(enrolKey: String?) {
         val api = api() ?: return
         val session = sessions.current
-        if (session != null && !counter(session)) return
+        if (session != null && !session.offline && !counter(session)) return
 
         val device = ensureDevice()
-        val key = secrets.open(device.syncKeySealed)
-        // With nobody signed in, or a « Hors ligne » session (no token): the device key alone.
-        val keyAlone = session == null || session.offline
-        if (keyAlone && key == null) return
+        val key = if (enrolKey != null) null else secrets.open(device.syncKeySealed)
+        // The device key alone (O4a); without one, the branch key typed in Réglages, or a signed-in account's token.
+        val withToken = session != null && !session.offline
+        if (key == null && enrolKey == null && !withToken) return
 
         val request = HeartbeatRequest(
             deviceUuid = device.uuid,
@@ -391,14 +430,19 @@ class OfflineSync(
             appVersion = AppInfo.version,
             pendingCount = store.outboxSize(),
             oldestPendingAt = store.oldestOutbox()?.let { Instant.ofEpochMilli(it).toString() },
-            snapshotVersion = store.snapshotPart("static")?.version,
+            snapshotVersion = store.snapshotPart("static")?.takeIf { isBranchCopy(it) }?.version,
+            snapshotFormat = 2,
         )
 
         val sentAt = now()
         val data = try {
-            api.heartbeat(request, key).data ?: return
+            api.heartbeat(request, key, enrolKey).data ?: return
         } catch (e: HttpException) {
-            if (e.code() == 401 && keyAlone) updateDevice { it.copy(keyRefused = true) }
+            if (enrolKey != null) throw e
+            if (e.code() == 401 && key != null && !withToken) updateDevice { it.copy(keyRefused = true) }
+            return
+        } catch (e: IOException) {
+            if (enrolKey != null) throw e
             return
         }
 
@@ -416,7 +460,7 @@ class OfflineSync(
         if (after.code != before) AppLog.info("Mode hors ligne : ce poste est « Caisse PC ${after.code} » sur la caisse")
 
         if (data.syncKey != null) requestSync()
-        if (data.snapshotStale && !keyAlone) runCatching { refreshSnapshot("static") }
+        if (data.snapshotStale && enrolKey == null) runCatching { refreshSnapshot("static") }
         applyWaiting(data.waiting)
     }
 
@@ -447,13 +491,11 @@ class OfflineSync(
 
     // ---------------------------------------------------------------- snapshot
 
-    /** parts: « static », « checks » or both. Needs a counter account signed in and the device key. */
+    /** parts: « static », « checks » or both. The device key alone (O4a): signed in or not. */
     suspend fun refreshSnapshot(parts: String) {
         val api = api() ?: return
         val session = sessions.current
-        // The copy is given to an account signed in at the caisse: never to a « Hors ligne » session (no token).
-        if (!counter(session) || session?.offline == true) return
-        val userId = session?.user?.id ?: return
+        if (session != null && !session.offline && !counter(session)) return
 
         var device = ensureDevice()
         if (device.syncKeySealed == null) {
@@ -463,9 +505,11 @@ class OfflineSync(
         val key = secrets.open(device.syncKeySealed) ?: return
         val stored = store.snapshotPart("static")
         val asksStatic = "static" in parts
-        // The copy names a « Hors ligne » account but this PC holds no PIN check: take the whole copy again.
-        val pinsMissing = asksStatic && stored != null && namesOfflineAccount(stored) &&
-            store.offlineAccess()?.accountVerifierSealed == null
+        // A copy of one Caisse (before O4a), or one naming a « Hors ligne » account whose PIN check this PC does not
+        // hold: take the whole copy again.
+        val pinsMissing = asksStatic && stored != null &&
+            (!isBranchCopy(stored) || (namesOfflineAccount(stored) && store.offlineAccesses().none { it.accountVerifierSealed != null }))
+        val userId = 0L
 
         val response = api.snapshot(
             parts = parts,
@@ -487,11 +531,11 @@ class OfflineSync(
         data.static?.let { static ->
             // The PIN checks are kept apart, sealed; the stored copy goes without them.
             keepOfflineAccess(static)
-            store.saveSnapshotPart(SnapshotPartEntity("static", data.version, data.caisseId, userId, withoutVerifiers(static).toString(), savedAt))
+            store.saveSnapshotPart(SnapshotPartEntity("static", data.version, 0, userId, withoutVerifiers(static).toString(), savedAt))
             AppLog.info("Mode hors ligne : copie de la caisse mise à jour (version ${data.version ?: "?"})")
         }
 
-        data.checks?.let { checks -> saveChecks(checks, data.caisseId, userId, savedAt) }
+        data.checks?.let { checks -> saveChecks(checks, 0, userId, savedAt) }
     }
 
     private suspend fun saveChecks(checks: JsonObject, caisseId: Long, userId: Long, savedAt: Long) {
@@ -533,45 +577,48 @@ class OfflineSync(
     }
 
     /**
-     * The Caisse's « Hors ligne » account and the PIN checks from a new copy, sealed for this Windows account. No
-     * offline PIN at the caisse any more: they are erased.
+     * Each Caisse's « Hors ligne » account and the PIN checks from a new copy, sealed for this Windows account. A Caisse
+     * without an offline PIN at the caisse has no row.
      */
     private suspend fun keepOfflineAccess(static: JsonObject) {
-        val offline = static["offline"] as? JsonObject
-        val account = offline?.get("account") as? JsonObject
-        val caisse = static["caisse"] as? JsonObject
-        val accountId = account?.get("id")?.jsonPrimitive?.longOrNull
-        val verifier = (account?.get("verifier") as? JsonPrimitive)?.contentOrNull
-
-        if (accountId == null || verifier.isNullOrBlank()) {
-            store.saveOfflineAccess(null)
-            return
-        }
-
-        store.saveOfflineAccess(
+        val payment = ((static["offline"] as? JsonObject)?.get("payment_pin") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        val paymentSealed = payment?.let { secrets.seal(it) }
+        val accesses = (static["caisses"] as? JsonArray).orEmpty().mapNotNull { element ->
+            val caisse = element as? JsonObject ?: return@mapNotNull null
+            val account = caisse["offline_account"] as? JsonObject ?: return@mapNotNull null
+            val accountId = account["id"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null
+            val verifier = (account["verifier"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             OfflineAccess(
                 accountId = accountId,
                 accountName = (account["name"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
                 accountVerifierSealed = secrets.seal(verifier),
-                paymentVerifierSealed = (offline["payment_pin"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { secrets.seal(it) },
-                caisseId = caisse?.get("id")?.jsonPrimitive?.longOrNull ?: 0,
-                caisseName = (caisse?.get("name") as? JsonPrimitive)?.contentOrNull.orEmpty(),
-                caisseMenuId = (caisse?.get("menu_id") as? JsonPrimitive)?.longOrNull ?: 0,
-            ),
-        )
+                paymentVerifierSealed = paymentSealed,
+                caisseId = caisse["id"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null,
+                caisseName = (caisse["name"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                caisseMenuId = (caisse["menu_id"] as? JsonPrimitive)?.longOrNull ?: 0,
+            )
+        }
+        store.saveOfflineAccesses(accesses)
     }
 
-    private fun namesOfflineAccount(stored: SnapshotPartEntity): Boolean {
-        val static = runCatching { json.parseToJsonElement(stored.json).jsonObject }.getOrNull() ?: return false
-        return ((static["offline"] as? JsonObject)?.get("account") as? JsonObject)?.get("id") != null
-    }
+    private fun parsed(stored: SnapshotPartEntity): JsonObject? = runCatching { json.parseToJsonElement(stored.json).jsonObject }.getOrNull()
 
-    /** The copy as stored: the account's id and name stay (orders are recorded as it), the PIN checks do not. */
+    private fun isBranchCopy(stored: SnapshotPartEntity): Boolean = parsed(stored)?.get("format")?.jsonPrimitive?.longOrNull == 2L
+
+    private fun namesOfflineAccount(stored: SnapshotPartEntity): Boolean =
+        (parsed(stored)?.get("caisses") as? JsonArray).orEmpty().any { ((it as? JsonObject)?.get("offline_account") as? JsonObject)?.get("id") != null }
+
+    /** The copy as stored: each account's id and name stay (orders are recorded as it), the PIN checks do not. */
     private fun withoutVerifiers(static: JsonObject): JsonObject {
-        val offline = static["offline"] as? JsonObject ?: return static
-        val account = (offline["account"] as? JsonObject)?.let { JsonObject(it - "verifier") }
-        val cleaned = JsonObject(offline - "payment_pin" - "account" + listOfNotNull(account?.let { "account" to it }).toMap())
-        return JsonObject(static + ("offline" to cleaned))
+        val caisses = (static["caisses"] as? JsonArray)?.let { list ->
+            JsonArray(list.map { element ->
+                val caisse = element as? JsonObject ?: return@map element
+                val account = caisse["offline_account"] as? JsonObject ?: return@map caisse
+                JsonObject(caisse + ("offline_account" to JsonObject(account - "verifier")))
+            })
+        }
+        val offline = (static["offline"] as? JsonObject)?.let { JsonObject(it - "payment_pin") }
+        return JsonObject(static + listOfNotNull(caisses?.let { "caisses" to it }, offline?.let { "offline" to it }).toMap())
     }
 
     suspend fun dismissReview(commandId: String) = store.deleteReview(commandId)
@@ -608,7 +655,10 @@ class OfflineSync(
 
         val items = ((root?.get("menu") as? JsonObject)?.get("items") as? JsonArray)?.size ?: 0
         val tables = (root?.get("areas") as? JsonArray).orEmpty().sumOf { area -> ((area as? JsonObject)?.get("tables") as? JsonArray)?.size ?: 0 }
-        val caisseName = ((root?.get("caisse") as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull
+        // O4a: the branch's copy names its Caisses; a copy of one Caisse (before) its own.
+        val caisseName = (root?.get("caisses") as? JsonArray)
+            ?.mapNotNull { ((it as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull }?.takeIf { it.isNotEmpty() }?.joinToString(", ")
+            ?: ((root?.get("caisse") as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull
 
         return SnapshotSummary(static?.savedAt, checks?.savedAt, caisseName, items, tables, openChecks)
     }

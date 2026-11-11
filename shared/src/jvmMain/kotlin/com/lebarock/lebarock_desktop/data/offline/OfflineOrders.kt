@@ -50,6 +50,8 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import java.time.Instant
@@ -114,7 +116,7 @@ class OfflineOrders(
     private val paymentsSerializer = ListSerializer(LocalPayment.serializer())
 
     @Volatile
-    private var cached: Pair<Long, OfflineCatalog>? = null
+    private var cached: Triple<Long, Long?, OfflineCatalog>? = null
 
     companion object {
         const val NOT_CONFIGURED =
@@ -189,9 +191,11 @@ class OfflineOrders(
 
     private suspend fun catalog(): OfflineCatalog {
         val part = store.snapshotPart("static") ?: refusal(NO_COPY)
-        cached?.let { (savedAt, catalog) -> if (savedAt == part.savedAt) return catalog }
-        val catalog = OfflineCatalog(json.parseToJsonElement(part.json).jsonObject, json)
-        cached = part.savedAt to catalog
+        // O4a: the branch's copy; the session's Caisse picks its menu and its « Hors ligne » account.
+        val caisseId = sessions.current?.caisse?.id
+        cached?.let { (savedAt, forCaisse, catalog) -> if (savedAt == part.savedAt && forCaisse == caisseId) return catalog }
+        val catalog = OfflineCatalog(json.parseToJsonElement(part.json).jsonObject, json, caisseId)
+        cached = Triple(part.savedAt, caisseId, catalog)
         return catalog
     }
 
@@ -327,8 +331,17 @@ class OfflineOrders(
         }
     }
 
-    private suspend fun copyChecks(): List<OrderDetailDto> = store.openChecks().mapNotNull {
-        runCatching { json.decodeFromString(OrderDetailDto.serializer(), it.json) }.getOrNull()
+    /**
+     * The copy's open checks: every table's, and the « À emporter » of this session's Caisse only (O4a: the branch's
+     * copy carries every Caisse's, each with its `caisse_id`).
+     */
+    private suspend fun copyChecks(): List<OrderDetailDto> {
+        val caisseId = sessions.current?.caisse?.id
+        return store.openChecks().mapNotNull { row ->
+            val check = runCatching { json.decodeFromString(OrderDetailDto.serializer(), row.json) }.getOrNull() ?: return@mapNotNull null
+            val owner = runCatching { json.parseToJsonElement(row.json).jsonObject["caisse_id"]?.jsonPrimitive?.longOrNull }.getOrNull()
+            check.takeIf { it.table != null || owner == null || caisseId == null || owner == caisseId }
+        }
     }
 
     private fun lines(local: LocalOrderEntity): List<LocalLine> =

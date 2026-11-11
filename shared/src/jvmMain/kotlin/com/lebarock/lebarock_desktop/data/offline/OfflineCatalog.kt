@@ -25,8 +25,11 @@ import java.util.TimeZone
  * The « static » part of the copy read into what the offline screens, the bill and the kitchen tickets need (offline
  * step 2, the handheld's OfflineCatalog): the Caisse's menu, tables, stations, receipt settings and labels, taxes and
  * charges, the currency, the « Hors ligne » account. The caisse wrote it; nothing here is invented on the PC.
+ *
+ * O4a: the copy is the branch's (`format` 2, every Caisse); [wantedCaisseId] picks the one of the session (the signed-in
+ * account's Caisse, or the Caisse of the « Hors ligne » PIN typed). A copy of one Caisse (format 1) is read as before.
  */
-class OfflineCatalog(root: JsonObject, json: Json) {
+class OfflineCatalog(root: JsonObject, json: Json, wantedCaisseId: Long? = null) {
 
     data class TableRef(val id: Long, val code: String, val seats: Int)
     data class AreaRef(val id: Long, val name: String, val tables: List<TableRef>)
@@ -38,15 +41,24 @@ class OfflineCatalog(root: JsonObject, json: Json) {
     private fun JsonObject?.dbl(key: String): Double? = this?.get(key)?.let { runCatching { it.jsonPrimitive.doubleOrNull }.getOrNull() }
     private fun JsonObject?.bool(key: String): Boolean = this?.get(key)?.let { runCatching { it.jsonPrimitive.booleanOrNull }.getOrNull() } ?: false
 
-    private val caisse = root.obj("caisse")
+    /** The branch's copy (O4a): every Caisse, each with its menu and its « Hors ligne » account. */
+    val branchWide: Boolean = root.long("format") == 2L
+
+    private val caisses = root.arr("caisses")
+    private val caisse: JsonObject? = if (branchWide) {
+        caisses.firstOrNull { it.long("id") == wantedCaisseId } ?: caisses.singleOrNull()
+    } else {
+        root.obj("caisse")
+    }
     val caisseId: Long = caisse.long("id") ?: 0
     val caisseName: String = caisse.str("name").orEmpty()
     val caisseMenuId: Long? = caisse.long("menu_id")
     val deviceCode: String? = root.obj("device").str("code")
 
-    /** The menu items, as GET /api/mobile/menu-items gives them (photo, section, variations, options). */
+    /** The menu items, as GET /api/mobile/menu-items gives them; a Caisse with its own menu sells only that menu. */
     val items: List<MenuItemDto> = (root.obj("menu")?.get("items") as? JsonArray).orEmpty()
         .mapNotNull { runCatching { json.decodeFromJsonElement(MenuItemDto.serializer(), it) }.getOrNull() }
+        .filter { !branchWide || caisseMenuId == null || it.menuId == caisseMenuId }
 
     /** Each item's kitchen station (null: no kitchen, e.g. a drink). */
     val stationOf: Map<Long, Long?> = (root.obj("menu")?.get("items") as? JsonArray).orEmpty()
@@ -57,7 +69,7 @@ class OfflineCatalog(root: JsonObject, json: Json) {
     val menus: List<MenuDto> = root.arr("menus").mapNotNull { menu ->
         val id = menu.long("id") ?: return@mapNotNull null
         MenuDto(id = id, name = menu.str("name").orEmpty(), itemsCount = menu["items_count"]?.jsonPrimitive?.intOrNull ?: 0)
-    }.ifEmpty {
+    }.filter { menu -> items.any { it.menuId == menu.id } }.ifEmpty {
         // A copy taken before the caisse sent the menus' names.
         items.mapNotNull { it.menuId }.distinct().map { id -> MenuDto(id, if (id == caisseMenuId) caisseName else "Menu", items.count { it.menuId == id }) }
     }
@@ -151,8 +163,9 @@ class OfflineCatalog(root: JsonObject, json: Json) {
      * The Caisse's « Hors ligne » account: everything done offline is recorded as it (client, 2026-11-10: as on the
      * handheld). Null: no offline PIN set at the caisse.
      */
-    val offlineAccountId: Long? = offline.obj("account").long("id")
-    val offlineAccountName: String? = offline.obj("account").str("name")
+    private val account: JsonObject? = if (branchWide) caisse.obj("offline_account") else offline.obj("account")
+    val offlineAccountId: Long? = account.long("id")
+    val offlineAccountName: String? = account.str("name")
 
     /** A check's totals the caisse's way (OrderTotals): taxes and charges on (sub-total − discount), then the tip. */
     data class Totals(

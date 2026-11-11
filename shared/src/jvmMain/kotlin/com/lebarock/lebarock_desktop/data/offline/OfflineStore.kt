@@ -144,8 +144,9 @@ data class LocalOrderEntity(
 )
 
 /**
- * The Caisse's « Hors ligne » account and the offline PIN checks of the last copy, sealed for this Windows account.
- * The copy itself is stored without them. The sign-in with the PIN comes with step 3.
+ * A Caisse's « Hors ligne » account and the offline PIN checks of the last copy, sealed for this Windows account: one
+ * row per Caisse of the branch (O4a; « Connexion hors ligne » finds the Caisse by the PIN typed). The payment PIN is
+ * the restaurant's, the same on each row. The copy itself is stored without them.
  */
 data class OfflineAccess(
     val accountId: Long,
@@ -165,7 +166,7 @@ class OfflineStore private constructor(private val connection: Connection, val p
 
     companion object {
         /** The schema's version (`PRAGMA user_version`); raise it with each change and add its step to [migrate]. */
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
 
         /**
          * Opens `offline.db` (made on the first start). A file that cannot be read is kept aside
@@ -215,6 +216,9 @@ class OfflineStore private constructor(private val connection: Connection, val p
         try {
             connection.createStatement().use { st ->
                 if (version < 1) SCHEMA_V1.forEach(st::execute)
+                // O4a: one PIN check per Caisse (the branch's copy). The old single row goes; the next copy (within
+                // the minute, with the PC's key) brings them back.
+                if (version < 2) SCHEMA_V2.forEach(st::execute)
                 st.execute("PRAGMA user_version=$SCHEMA_VERSION")
             }
             connection.commit()
@@ -374,25 +378,34 @@ class OfflineStore private constructor(private val connection: Connection, val p
 
     // ---------------------------------------------------------------- offline access
 
-    suspend fun offlineAccess(): OfflineAccess? = read {
-        one("SELECT * FROM offline_access WHERE id = 1") { rs ->
-            OfflineAccess(
-                rs.getLong("account_id"), rs.getString("account_name"), rs.getString("account_verifier_sealed"),
-                rs.getString("payment_verifier_sealed"), rs.getLong("caisse_id"), rs.getString("caisse_name"), rs.getLong("caisse_menu_id"),
-            )
+    /** Every Caisse with a « Hors ligne » PIN on this PC (its name order). */
+    suspend fun offlineAccesses(): List<OfflineAccess> = read {
+        list("SELECT * FROM offline_access ORDER BY caisse_name, caisse_id") { rs -> accessOf(rs) }
+    }
+
+    /** One Caisse's row; with no [caisseId], the first (the payment PIN is the same on each). */
+    suspend fun offlineAccess(caisseId: Long? = null): OfflineAccess? = read {
+        if (caisseId == null) {
+            one("SELECT * FROM offline_access ORDER BY caisse_name, caisse_id LIMIT 1") { rs -> accessOf(rs) }
+        } else {
+            one("SELECT * FROM offline_access WHERE caisse_id = ?", caisseId) { rs -> accessOf(rs) }
         }
     }
 
-    /** null = no « Hors ligne » account (or no PIN) at the caisse any more: nothing is kept. */
-    suspend fun saveOfflineAccess(access: OfflineAccess?) = write {
-        if (access == null) {
-            run("DELETE FROM offline_access")
-        } else {
+    private fun accessOf(rs: java.sql.ResultSet) = OfflineAccess(
+        rs.getLong("account_id"), rs.getString("account_name"), rs.getString("account_verifier_sealed"),
+        rs.getString("payment_verifier_sealed"), rs.getLong("caisse_id"), rs.getString("caisse_name"), rs.getLong("caisse_menu_id"),
+    )
+
+    /** The PIN checks of a new copy replace the old ones; an empty list = no PIN at the caisse any more. */
+    suspend fun saveOfflineAccesses(accesses: List<OfflineAccess>) = write {
+        run("DELETE FROM offline_access")
+        accesses.forEach { access ->
             run(
-                "INSERT OR REPLACE INTO offline_access (id, account_id, account_name, account_verifier_sealed, payment_verifier_sealed, " +
-                    "caisse_id, caisse_name, caisse_menu_id) VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
-                access.accountId, access.accountName, access.accountVerifierSealed, access.paymentVerifierSealed,
-                access.caisseId, access.caisseName, access.caisseMenuId,
+                "INSERT OR REPLACE INTO offline_access (caisse_id, account_id, account_name, account_verifier_sealed, " +
+                    "payment_verifier_sealed, caisse_name, caisse_menu_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                access.caisseId, access.accountId, access.accountName, access.accountVerifierSealed, access.paymentVerifierSealed,
+                access.caisseName, access.caisseMenuId,
             )
         }
     }
@@ -574,4 +587,12 @@ private val SCHEMA_V1 = listOf(
     """CREATE TABLE IF NOT EXISTS offline_access (
         id INTEGER PRIMARY KEY CHECK (id = 1), account_id INTEGER NOT NULL, account_name TEXT NOT NULL, account_verifier_sealed TEXT,
         payment_verifier_sealed TEXT, caisse_id INTEGER NOT NULL, caisse_name TEXT NOT NULL, caisse_menu_id INTEGER NOT NULL)""",
+)
+
+/** O4a: one « Hors ligne » row per Caisse of the branch. */
+private val SCHEMA_V2 = listOf(
+    "DROP TABLE IF EXISTS offline_access",
+    """CREATE TABLE IF NOT EXISTS offline_access (
+        caisse_id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, account_name TEXT NOT NULL, account_verifier_sealed TEXT,
+        payment_verifier_sealed TEXT, caisse_name TEXT NOT NULL, caisse_menu_id INTEGER NOT NULL)""",
 )

@@ -35,6 +35,8 @@ class TablesModel(
     private val onOpenCheck: (Long) -> Unit,
     /** The POS for a new order on this table with these covers. */
     private val onNewOrder: (TableDto, Int) -> Unit,
+    /** Live updates (2026-11-11): the floor reads again at once when a check, a table or a payment changes. */
+    private val live: com.lebarock.lebarock_desktop.data.realtime.LiveUpdates? = null,
 ) : ScreenModel() {
 
     private val messageChannel = Channel<String>(Channel.BUFFERED)
@@ -65,8 +67,22 @@ class TablesModel(
         refresh()
         scope.launch {
             while (true) {
-                delay(REFRESH_MILLIS)
+                // Live: a slow check only (signals bring the changes); not live: every 15 s, as before.
+                delay(if (live?.connected?.value == true) com.lebarock.lebarock_desktop.data.realtime.LiveUpdates.SLOW_CHECK_MILLIS else REFRESH_MILLIS)
                 refresh(force = false)
+            }
+        }
+        live?.let { updates ->
+            scope.launch {
+                var pending: kotlinx.coroutines.Job? = null
+                updates.floor.collect {
+                    // Several signals in a row (one action) → one read.
+                    pending?.cancel()
+                    pending = scope.launch {
+                        delay(LIVE_SETTLE_MILLIS)
+                        refresh(force = true)
+                    }
+                }
             }
         }
     }
@@ -167,5 +183,6 @@ class TablesModel(
     companion object {
         /** As the web floor (`wire:poll.15s`). */
         const val REFRESH_MILLIS = 15_000L
+        const val LIVE_SETTLE_MILLIS = 300L
     }
 }

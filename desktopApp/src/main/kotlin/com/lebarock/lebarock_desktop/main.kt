@@ -54,6 +54,8 @@ fun main(args: Array<String>) {
     container.printAgent.start(appScope)
     // Offline mode: this PC says it is there, keeps its copy of the caisse and sends what waits, window open or not.
     container.offline.start()
+    // Live updates (2026-11-11): the floor and « À encaisser » follow the caisse at once while someone is signed in.
+    container.live.start()
 
     application {
         val settings by container.settings.settings.collectAsState()

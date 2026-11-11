@@ -204,6 +204,7 @@ fun App(container: AppContainer) {
                             container.orders, container.sessions, screen.message,
                             onOpenCheck = { id -> navigator.push(Screen.Pos(orderId = id)) },
                             onNewOrder = { table, covers -> navigator.push(Screen.Pos(table = table, covers = covers)) },
+                            live = container.live,
                         )
                     }
                     TablesScreen(model, caisseName = session?.caisse?.name, onBack = navigator::back)
@@ -217,6 +218,7 @@ fun App(container: AppContainer) {
                                 navigator.push(Screen.Pos(orderId = id))
                             },
                             initialFilter = if (screen.toPay) com.lebarock.lebarock_desktop.ui.orders.OrderFilter.TO_PAY else com.lebarock.lebarock_desktop.ui.orders.OrderFilter.ALL,
+                            live = container.live,
                         )
                     }
                     LaunchedEffect(model) { screen.select?.let(model::select) }

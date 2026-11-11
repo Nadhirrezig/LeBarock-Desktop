@@ -38,6 +38,14 @@ interface AltosApi {
     @GET("api/mobile/me")
     suspend fun me(): Envelope<UserDto>
 
+    /** Live updates (2026-11-11): where to connect and this account's channels. */
+    @GET("api/mobile/realtime")
+    suspend fun realtime(): Envelope<RealtimeInfoDto>
+
+    /** Live updates: the caisse signs a private channel for this connection. */
+    @POST("api/realtime/auth")
+    suspend fun realtimeAuth(@Body body: RealtimeAuthRequest): RealtimeAuthDto
+
     /** The Caisses an Admin / Gérant may switch to (others: 403). */
     @GET("api/mobile/terminals")
     suspend fun terminals(): Envelope<List<TerminalDto>>

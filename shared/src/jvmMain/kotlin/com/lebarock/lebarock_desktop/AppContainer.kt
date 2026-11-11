@@ -44,7 +44,10 @@ class AppContainer(dataDir: File = AppInfo.dataDir) {
 
     /** Ask the window to end the session and show the sign-in (window closed to the tray). */
     val lockRequests = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
-    val printAgent = PrintAgent(settings, secrets, ticketPrinter, agentClient)
+    val printAgent = PrintAgent(settings, secrets, ticketPrinter, agentClient, liveHttp = { api.liveHttp() })
+
+    /** Live updates (2026-11-11): the signed-in account's floor channel (floor, « À encaisser »). */
+    val live = com.lebarock.lebarock_desktop.data.realtime.LiveUpdates(api, settings, sessions)
 }
 
 /**

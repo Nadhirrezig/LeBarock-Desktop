@@ -64,6 +64,8 @@ class OrdersModel(
     private val onNewRound: (Long) -> Unit,
     /** D5: opened from Accueil « Encaisser »: the checks to pay first (Facturées). */
     initialFilter: OrderFilter = OrderFilter.ALL,
+    /** Live updates (2026-11-11): the list (and the open check) read again when a check changes in the branch. */
+    live: com.lebarock.lebarock_desktop.data.realtime.LiveUpdates? = null,
 ) : ScreenModel() {
 
     private val messageChannel = Channel<String>(Channel.BUFFERED)
@@ -135,6 +137,18 @@ class OrdersModel(
     init {
         initialMessage?.let { messageChannel.trySend(it) }
         refresh()
+        live?.let { updates ->
+            scope.launch {
+                var pending: kotlinx.coroutines.Job? = null
+                updates.floor.collect {
+                    pending?.cancel()
+                    pending = scope.launch {
+                        kotlinx.coroutines.delay(300)
+                        refresh()
+                    }
+                }
+            }
+        }
     }
 
     fun refresh() {

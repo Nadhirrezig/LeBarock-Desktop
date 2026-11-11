@@ -67,6 +67,23 @@ class ApiClient(
     }
 
     /**
+     * Live updates (2026-11-11): the websocket client — same trust, no read timeout (the connection stays open),
+     * a websocket ping every 25 s so a dead network is noticed.
+     */
+    fun liveHttp(): OkHttpClient {
+        val trust = trustManagerFactory()
+        return OkHttpClient.Builder()
+            .sslSocketFactory(TrustStore.sslContext(trust).socketFactory, trust)
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.SECONDS)
+            .pingInterval(25, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                chain.proceed(chain.request().newBuilder().header("User-Agent", "${AppInfo.NAME}-Desktop/${AppInfo.version}").build())
+            }
+            .build()
+    }
+
+    /**
      * The HTTP client of the print agent: same trust and timeouts, but never the signed-in
      * account's token (the agent works with the branch key, whoever is signed in).
      */

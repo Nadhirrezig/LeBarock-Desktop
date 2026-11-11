@@ -17,7 +17,7 @@ Name on Windows: **AltosPOS**. Detail of each step is in git history (cleaned up
 - Kotlin 2.4.21, Compose Multiplatform 1.12.2, Gradle 9.5.1, JDK 21; Retrofit 3, OkHttp 5, kotlinx.serialization,
   JNA (DPAPI, registry), sqlite-jdbc (offline store; installed app needs `java.sql`).
 - Modules: `shared` (code `src/jvmMain`, tests `src/jvmTest`), `desktopApp` (window, tray, installer).
-- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**132 tests**, 2026-11-11).
+- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**136 tests**, 2026-11-12).
 - Installer: `gradlew :desktopApp:packageMsi` **on Windows**; raise `altospos.version` each release; `upgradeUuid`
   never changes.
 - Data folder `%APPDATA%\AltosPOS` (`settings.json`, `offline.db`, `logs\`, `certs\`, `cache\images`);
@@ -50,6 +50,10 @@ Name on Windows: **AltosPOS**. Detail of each step is in git history (cleaned up
 - **Caisse**: session, movements (web names), X, Z by value + « Reste (pièces) », past X / Z, expenses; every money
   action asks « Confirmer »; the Z's approval stays on the web.
 - **Check view**: sub-total, discount, charges, taxes, tip, total, payments (the caisse sends `taxes`).
+- **Live updates (client, 2026-11-11)**: `data/realtime/LiveSocket` (Pusher protocol 7 over OkHttp, same trust as the
+  API, reconnects 1 → 30 s) — `LiveUpdates` (signed-in account, floor channel: Tables and Commandes / « À encaisser »
+  read again at once) and the « Directe » agent (printer channel, branch key: prints at once). Live → check every 30 s;
+  live down → as before (floor 15 s, agent 2 s). Logged « Direct (…) : en direct / connexion perdue ».
 - **Offline** (`/api/sync/*`, the PC is « Caisse PC D1 »):
   - registers with the branch's « Clé de synchronisation »; syncs with its key alone, signed in or not; copy of every
     Caisse within 30 s;
@@ -78,6 +82,7 @@ Name on Windows: **AltosPOS**. Detail of each step is in git history (cleaned up
 - Offline O1 foundation · O2 orders · O3 « Hors ligne » sign-in and payment · O4a key-only sync · O4b check edits ·
   O4c table operations · O4d tip.
 - « Code remise » window (online and offline).
+- Live updates (2026-11-12): floor and « À encaisser » follow the caisse within ~1 s; reconnects after a Reverb restart.
 - Service test 2026-11-11 (3 waiters + this PC as Caissier): discount with the code, cash with change, card, split;
   drawer and receipts right; tax lines added to the check view.
 - Each run end to end on the packaged app at 1366 × 768 (and 1093 × 614). Not checked here: a real Windows screen,

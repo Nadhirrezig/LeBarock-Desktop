@@ -629,3 +629,23 @@ data class PrintAgentPrinterDto(
     val active: Boolean = true,
     val caisses: List<String> = emptyList(),
 )
+
+/** Live updates (2026-11-11): GET /api/mobile/realtime and /api/realtime/agent. */
+@Serializable
+data class RealtimeInfoDto(
+    val enabled: Boolean = false,
+    val key: String = "",
+    val path: String = "",
+    @SerialName("auth_path") val authPath: String = "/api/realtime/auth",
+    val channels: Map<String, String> = emptyMap(),
+    @SerialName("fallback_seconds") val fallbackSeconds: Int = 30,
+)
+
+@Serializable
+data class RealtimeAuthRequest(
+    @SerialName("socket_id") val socketId: String,
+    @SerialName("channel_name") val channelName: String,
+)
+
+@Serializable
+data class RealtimeAuthDto(val auth: String? = null)

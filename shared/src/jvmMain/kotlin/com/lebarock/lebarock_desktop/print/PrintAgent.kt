@@ -62,6 +62,33 @@ class AgentClient(private val http: () -> OkHttpClient) {
         }
     }
 
+    /** Live updates (2026-11-11): GET /api/realtime/agent — where to connect and the branch's printer channel; null = none. */
+    fun realtime(baseUrl: String, key: String): Pair<String, String>? {
+        val request = Request.Builder().url("${baseUrl}api/realtime/agent").header(KEY_HEADER, key).get().build()
+        http().newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val data = json.parseToJsonElement(response.body.string()).jsonObject["data"]?.jsonObject ?: return null
+            if (data["enabled"]?.jsonPrimitive?.booleanOrNull != true) return null
+            val path = data["path"]?.jsonPrimitive?.contentOrNull ?: return null
+            val channel = data["channels"]?.jsonObject?.get("printer")?.jsonPrimitive?.contentOrNull ?: return null
+            return path to channel
+        }
+    }
+
+    /** Live updates: the caisse signs the printer channel for this connection (the branch key). */
+    fun realtimeAuth(baseUrl: String, key: String, socketId: String, channel: String): String? {
+        val payload = buildJsonObject {
+            put("socket_id", socketId)
+            put("channel_name", channel)
+        }
+        val request = Request.Builder().url("${baseUrl}api/realtime/auth").header(KEY_HEADER, key)
+            .post(payload.toString().toRequestBody("application/json".toMediaType())).build()
+        http().newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            return json.parseToJsonElement(response.body.string()).jsonObject["auth"]?.jsonPrimitive?.contentOrNull
+        }
+    }
+
     /** PATCH /api/print-jobs/{id}: done or failed, with the printer that took it. */
     fun report(baseUrl: String, key: String, jobId: Long, printed: Boolean, printer: String, error: String?) {
         val payload = buildJsonObject {
@@ -145,14 +172,19 @@ class PrintAgent(
     private val client: AgentClient,
     private val pollMillis: Long = 2_000,
     private val retryMillis: Long = 10_000,
+    /** Live updates (2026-11-11): the websocket client; null = check every [pollMillis] only (tests, older setups). */
+    private val liveHttp: (() -> OkHttpClient)? = null,
 ) {
     private val _status = MutableStateFlow(AgentStatus())
     val status: StateFlow<AgentStatus> = _status.asStateFlow()
     private var watcher: Job? = null
 
     /** Follows the settings: (re)starts on each change of the agent or the server address. */
+    private var appScope: CoroutineScope? = null
+
     fun start(scope: CoroutineScope) {
         if (watcher != null) return
+        appScope = scope
         watcher = scope.launch(Dispatchers.IO) {
             settings.settings.map { it.agent to it.server.baseUrl }.distinctUntilChanged().collectLatest { (agent, baseUrl) ->
                 run(agent, baseUrl)
@@ -189,46 +221,75 @@ class PrintAgent(
         }
         set(AgentState.WAITING, "En attente de tickets.")
 
-        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
-            val job = try {
-                withContext(Dispatchers.IO) { client.pull(baseUrl, key!!, printerId!!) }
-            } catch (e: AgentHttpException) {
-                if (e.code == 401) {
-                    AppLog.warn("Impression Directe : clé refusée par la caisse")
-                    set(AgentState.KEY_REFUSED, "La caisse refuse la clé de ce poste : un administrateur doit configurer à nouveau.")
-                    return
-                }
-                set(AgentState.CAISSE_DOWN, "La caisse a répondu ${e.code}. Nouvel essai dans ${retryMillis / 1000} s.")
-                delay(retryMillis)
-                continue
-            } catch (e: Exception) {
-                set(AgentState.CAISSE_DOWN, "Caisse injoignable. Nouvel essai dans ${retryMillis / 1000} s.")
-                delay(retryMillis)
-                continue
-            }
-
-            if (job == null) {
-                if (_status.value.state != AgentState.PRINTER_ERROR) set(AgentState.WAITING, "En attente de tickets.")
-                delay(pollMillis)
-                continue
-            }
-
-            set(AgentState.PRINTING, "Impression du ticket #${job.id}…")
-            val printed = printer.printRaw(job.bytes, job.cut)
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    client.report(baseUrl, key!!, job.id, printed.isSuccess, printer.config.label, printed.exceptionOrNull()?.message)
-                }
-            }.onFailure { AppLog.warn("Impression Directe : compte rendu du ticket #${job.id} non envoyé (${it.message})") }
-
-            if (printed.isSuccess) {
-                count += 1
-                last = LocalDateTime.now()
-                set(AgentState.WAITING, "En attente de tickets.")
-            } else {
-                set(AgentState.PRINTER_ERROR, "Ticket #${job.id} non imprimé : ${printed.exceptionOrNull()?.message}")
-                delay(retryMillis / 2)
-            }
+        // Live updates: a new job wakes the agent at once; while live, it still checks every 30 s, otherwise as before.
+        val live = openLive(baseUrl, key!!)
+        val wake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+        val relay = live?.let { socket -> appScope?.launch { socket.events.collect { wake.trySend(Unit) } } }
+        suspend fun idle() {
+            val wait = if (live?.connected?.value == true) com.lebarock.lebarock_desktop.data.realtime.LiveUpdates.SLOW_CHECK_MILLIS else pollMillis
+            kotlinx.coroutines.withTimeoutOrNull(wait) { wake.receive() }
         }
+        try {
+            while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                val job = try {
+                    withContext(Dispatchers.IO) { client.pull(baseUrl, key!!, printerId!!) }
+                } catch (e: AgentHttpException) {
+                    if (e.code == 401) {
+                        AppLog.warn("Impression Directe : clé refusée par la caisse")
+                        set(AgentState.KEY_REFUSED, "La caisse refuse la clé de ce poste : un administrateur doit configurer à nouveau.")
+                        return
+                    }
+                    set(AgentState.CAISSE_DOWN, "La caisse a répondu ${e.code}. Nouvel essai dans ${retryMillis / 1000} s.")
+                    delay(retryMillis)
+                    continue
+                } catch (e: Exception) {
+                    set(AgentState.CAISSE_DOWN, "Caisse injoignable. Nouvel essai dans ${retryMillis / 1000} s.")
+                    delay(retryMillis)
+                    continue
+                }
+
+                if (job == null) {
+                    if (_status.value.state != AgentState.PRINTER_ERROR) set(AgentState.WAITING, "En attente de tickets.")
+                    idle()
+                    continue
+                }
+
+                set(AgentState.PRINTING, "Impression du ticket #${job.id}…")
+                val printed = printer.printRaw(job.bytes, job.cut)
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        client.report(baseUrl, key!!, job.id, printed.isSuccess, printer.config.label, printed.exceptionOrNull()?.message)
+                    }
+                }.onFailure { AppLog.warn("Impression Directe : compte rendu du ticket #${job.id} non envoyé (${it.message})") }
+
+                if (printed.isSuccess) {
+                    count += 1
+                    last = LocalDateTime.now()
+                    set(AgentState.WAITING, "En attente de tickets.")
+                } else {
+                    set(AgentState.PRINTER_ERROR, "Ticket #${job.id} non imprimé : ${printed.exceptionOrNull()?.message}")
+                    delay(retryMillis / 2)
+                }
+            }
+        } finally {
+            relay?.cancel()
+            live?.disconnect()
+        }
+    }
+
+    /** The printer channel of the branch, when the caisse has live updates; null otherwise (the agent then checks). */
+    private suspend fun openLive(baseUrl: String, key: String): com.lebarock.lebarock_desktop.data.realtime.LiveSocket? {
+        val http = liveHttp ?: return null
+        val info = runCatching { withContext(Dispatchers.IO) { client.realtime(baseUrl, key) } }.getOrNull() ?: return null
+        val socket = com.lebarock.lebarock_desktop.data.realtime.LiveSocket(
+            http = http,
+            name = "impression",
+            authorize = { socketId, channel -> withContext(Dispatchers.IO) { client.realtimeAuth(baseUrl, key, socketId, channel) } },
+        )
+        socket.connect(com.lebarock.lebarock_desktop.data.realtime.LiveSocket.Target(
+            com.lebarock.lebarock_desktop.data.realtime.LiveSocket.wsUrl(baseUrl, info.first), listOf(info.second),
+        ))
+        AppLog.info("Impression Directe : mises à jour en direct (${info.second})")
+        return socket
     }
 }

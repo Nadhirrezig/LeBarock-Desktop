@@ -105,7 +105,11 @@ class OrdersRepository(
         runCatching { sync?.rememberPosContext(json.encodeToJsonElement(PosContextDto.serializer(), context) as kotlinx.serialization.json.JsonObject) }
     }
 
-    suspend fun cancelReasons(): Result<List<CancelReasonDto>> = waits("annuler une commande") { caisse.call { caisse.api().cancelReasons().data.orEmpty() } }
+    suspend fun cancelReasons(): Result<List<CancelReasonDto>> =
+        offlineNow()?.cancelReasons() ?: caisse.call { caisse.api().cancelReasons().data.orEmpty() }
+
+    /** O4b: the screens answer from this PC's copy right now (the line's reason is asked offline). */
+    suspend fun offlineActive(): Boolean = offlineNow() != null
 
     // ---- Commandes ----
 
@@ -148,8 +152,10 @@ class OrdersRepository(
      * Takes a line off the check (one waiting for stock, or a sent drink with « Annuler une commande »). The last
      * line gone closes the check: kept « Annulée » when something of it was sent, deleted otherwise.
      */
-    suspend fun removeItem(orderId: Long, itemId: Long): Result<LineRemoval> = waits("retirer un article") {
-        caisse.call {
+    suspend fun removeItem(orderId: Long, itemId: Long, reasonId: Long? = null, reason: String? = null): Result<LineRemoval> {
+        // O4b: offline, with its reason, behind the manager's PIN.
+        offlineNow()?.let { off -> return off.removeLine(orderId, itemId, reasonId, reason).map { last -> if (last) LineRemoval.CANCELLED else LineRemoval.KEPT } }
+        return caisse.call {
             val answer = caisse.api().removeOrderItem(real(orderId), itemId)
             when {
                 answer.data != null -> LineRemoval.KEPT
@@ -171,7 +177,7 @@ class OrdersRepository(
     }
 
     /** « Annuler la commande »: kept as « Annulée » with its reason; money taken goes back first. */
-    suspend fun cancel(orderId: Long, reasonId: Long?, reason: String?): Result<Unit> = waits("annuler une commande") {
+    suspend fun cancel(orderId: Long, reasonId: Long?, reason: String?): Result<Unit> = offlineNow()?.cancel(orderId, reasonId, reason) ?: run {
         caisse.call {
             caisse.api().cancelOrder(real(orderId), CancelRequest(reasonId, reason?.trim()?.ifEmpty { null }))
             Unit
@@ -200,7 +206,7 @@ class OrdersRepository(
     }
 
     suspend fun setWaiter(orderId: Long, waiterId: Long): Result<CheckChange> =
-        waits("changer de serveur") { change { caisse.api().setWaiter(real(orderId), WaiterRequest(waiterId)) } }
+        offlineNow()?.setWaiter(orderId, waiterId) ?: change { caisse.api().setWaiter(real(orderId), WaiterRequest(waiterId)) }
 
     /** The restaurant's customers matching a name, phone or e-mail (2 characters at least). */
     suspend fun customers(search: String): Result<List<CustomerDto>> =
@@ -210,7 +216,7 @@ class OrdersRepository(
         waits("choisir un client") { change { caisse.api().setCustomer(real(orderId), request) } }
 
     suspend fun removeCharge(orderId: Long, chargeId: Long): Result<CheckChange> =
-        waits("retirer un frais") { change { caisse.api().removeCharge(real(orderId), chargeId) } }
+        offlineNow()?.removeCharge(orderId, chargeId) ?: change { caisse.api().removeCharge(real(orderId), chargeId) }
 
     /** Corrects a payment recorded with the wrong method, « cash » ⇄ « card »; the drawer follows. */
     suspend fun changePaymentMethod(orderId: Long, paymentId: Long, method: String): Result<CheckChange> =
@@ -258,7 +264,7 @@ class OrdersRepository(
 
     /** « Remise » on an open check (fixed | percent); [type] null takes it off. */
     suspend fun setDiscount(orderId: Long, type: String?, value: Double?): Result<CheckChange> =
-        waits("la remise") { change { caisse.api().setDiscount(real(orderId), DiscountRequest(type, value)) } }
+        offlineNow()?.setDiscount(orderId, type, value) ?: change { caisse.api().setDiscount(real(orderId), DiscountRequest(type, value)) }
 
     private suspend fun change(block: suspend () -> Envelope<OrderDetailDto>): Result<CheckChange> = caisse.call {
         val envelope = block()

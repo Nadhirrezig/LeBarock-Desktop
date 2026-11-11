@@ -19,7 +19,7 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   kotlinx.serialization, material-icons-extended, JNA (Windows DPAPI and registry), sqlite-jdbc (the offline store; the
   installed app needs the `java.sql` module, set in `desktopApp/build.gradle.kts`).
 - Modules: `shared` (all app code `src/jvmMain`, tests `src/jvmTest`), `desktopApp` (window, tray, installer settings).
-- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**119 tests**, 2026-11-11).
+- Run `gradlew :desktopApp:run`; tests `gradlew :shared:jvmTest` (**126 tests**, 2026-11-11).
 - Installer: `gradlew :desktopApp:packageMsi` **on Windows** → `desktopApp/build/compose/binaries/main/msi/AltosPOS-x.y.z.msi`.
   Raise `altospos.version` for each release (MAJOR.MINOR.BUILD); `upgradeUuid` never changes.
 - Data folder `%APPDATA%\AltosPOS` (`settings.json`, `offline.db`, `logs\`, `certs\`, `cache\images`, lock file);
@@ -78,8 +78,14 @@ step was built, run logs) is in git history (cleaned up 2026-11-10).
   synchronisation » typed in Réglages → Mode hors ligne (or, as before, at a sign-in); the copy is **the branch's: every
   Caisse** with its menu and « Hors ligne » PIN check, fresh within 30 s; **the PIN typed at « Connexion hors ligne »
   decides the Caisse** (menu, take-away checks, « Hors ligne » account); a signed-in account uses its own Caisse. The
-  key field keeps what is typed (adding dashes while typing moved the cursor). The caisse's `order.remove_line` only covers lines waiting for
-  stock: not used (as on the handheld).
+  key field keeps what is typed (adding dashes while typing moved the cursor). **O4b (client, 2026-11-11): the check's
+  changes offline — discount (cart and check), cancel with its reason, a sent line with no kitchen station taken off
+  with its reason (asked offline only), waiter, extra charge — behind the same payment PIN, once per check for 5 min
+  (`ui/offline/ManagerPin`, the « Code du gérant » window over the check's windows and the POS); shown at once
+  (`local_orders.edits_json`, store v3) and sent to the caisse. A dish sent to a kitchen is not taken off and a
+  discount under what was paid is refused, as online; nothing prints for the kitchen; a cancelled check's money goes
+  back when the caisse applies it.** Still waiting for the caisse: credit, tip, customer, table operations, Caisse page,
+  expenses. The caisse's `order.remove_line` is used since O4b (a sent line with no kitchen station, with its reason).
 - **Not included:** cash drawer, customer display, barcode, kitchen screen, waiter notifications, QR approvals.
 
 ## How the app is organised
@@ -154,7 +160,9 @@ USB printing through a Windows driver, tray and registry — the client's test.
       « Connexion hors ligne », an order paid in cash with the payment PIN, the caisse back (session open on the Caisse).
 - [x] **Offline O4a** key-only sync (2026-11-11) — client to test: Réglages → Mode hors ligne, type the key from the
       caisse (Paramètres → Mode hors ligne), nobody signed in: « Caisse PC D1 » and the copy of every Caisse.
-- [ ] **Offline O4b** check edits offline (discount, cancel, line taken off, waiter, charge) behind the payment PIN.
+- [x] **Offline O4b** check edits offline (2026-11-11) — client to test: stop the caisse, « Connexion hors ligne »,
+      an order with a cart discount (« Code du gérant »), then on it: waiter, « Retirer des frais », a drink taken off
+      with its reason, and cancel another check; start the caisse: same totals, check « Annulée » with its reason.
 - [ ] **Offline O4c** table operations offline (move, merge, split).
 - [ ] **Offline O4d** tip offline. Credit, customer, Caisse page and expenses stay online (client, 2026-11-11).
 - [ ] **D7 wrap-up** after O4 (CLAUDE.md files, deployment branches), then **MSI release — last** (client, 2026-11-10).
@@ -173,3 +181,6 @@ USB printing through a Windows driver, tray and registry — the client's test.
   only sync, branch copy, PIN picks the Caisse. Run end to end: fresh PC registered signed out, PIN and price changes
   reached it within 30 s, old PIN refused, Counter 2's PIN → Counter 2's menu (Mojito only), order D1-001 on T2
   recorded as « Hors ligne — Counter 2 ». Found: the key field moved the cursor when it added dashes (fixed).
+  O4b built: the check's changes offline behind the manager's PIN; run end to end (cart discount 10 % + PIN, drink
+  taken off « Renversé », waiter Sami, service fee removed, check #1 cancelled « Client parti » + PIN; the caisse back →
+  7 actions applied, D1-002 at 5.940 as on the PC; the store upgraded v2 → v3 on the PC).

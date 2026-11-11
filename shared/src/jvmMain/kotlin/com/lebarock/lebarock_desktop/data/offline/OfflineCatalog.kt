@@ -1,10 +1,13 @@
 package com.lebarock.lebarock_desktop.data.offline
 
+import com.lebarock.lebarock_desktop.data.remote.CancelReasonDto
 import com.lebarock.lebarock_desktop.data.remote.ChargeDto
 import com.lebarock.lebarock_desktop.data.remote.CurrencyDto
 import com.lebarock.lebarock_desktop.data.remote.MenuDto
 import com.lebarock.lebarock_desktop.data.remote.MenuItemDto
+import com.lebarock.lebarock_desktop.data.remote.OrderChargeDto
 import com.lebarock.lebarock_desktop.data.remote.TaxDto
+import com.lebarock.lebarock_desktop.data.remote.WaiterDto
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -177,7 +180,26 @@ class OfflineCatalog(root: JsonObject, json: Json, wantedCaisseId: Long? = null)
         val total: Double,
     )
 
-    fun totals(subTotal: Double, discountType: String?, discountValue: Double?, tip: Double, orderType: String): Totals {
+    /** O4b: the waiters a check can be put in the name of (never a « Hors ligne » account). */
+    val waiters: List<WaiterDto> = root.arr("waiters").mapNotNull { w -> w.long("id")?.let { WaiterDto(it, w.str("name").orEmpty()) } }
+
+    /** O4b: Paramètres → Motifs d'annulation (those for a whole order). */
+    val cancelReasons: List<CancelReasonDto> = root.arr("cancel_reasons").mapNotNull { r -> r.long("id")?.let { CancelReasonDto(it, r.str("reason").orEmpty()) } }
+
+    /** The restaurant's charges an order of [orderType] gets, as a check lists them (id = the restaurant's charge). */
+    fun chargesFor(orderType: String, base: Double): List<OrderChargeDto> = charges.filter { orderType in it.orderTypes }.map { c ->
+        OrderChargeDto(id = c.id, name = c.name, type = if (c.type == "percent") "percent" else "fixed", value = c.value,
+            amount = round2(if (c.type == "percent") base * c.value / 100 else c.value), removable = true)
+    }
+
+    fun totals(subTotal: Double, discountType: String?, discountValue: Double?, tip: Double, orderType: String): Totals =
+        totalsOf(subTotal, discountType, discountValue, tip, null, orderType)
+
+    /**
+     * The totals with a check's own extra charges ([checkCharges], O4b: some may have been taken off); null = the
+     * restaurant's charges for [orderType].
+     */
+    fun totalsOf(subTotal: Double, discountType: String?, discountValue: Double?, tip: Double, checkCharges: List<OrderChargeDto>?, orderType: String): Totals {
         val sub = round2(subTotal)
         val discount = when (discountType) {
             "percent" -> round2(sub * (discountValue ?: 0.0) / 100)
@@ -186,7 +208,7 @@ class OfflineCatalog(root: JsonObject, json: Json, wantedCaisseId: Long? = null)
         }
         val base = maxOf(0.0, round2(sub - discount))
         val taxRows = taxes.map { "${it.name} (${trim(it.percent)}%)" to round2(it.percent / 100 * base) }
-        val chargeRows = charges.filter { orderType in it.orderTypes }.map { charge ->
+        val chargeRows = (checkCharges ?: chargesFor(orderType, base)).map { charge ->
             val label = if (charge.type == "percent") "${charge.name} (${trim(charge.value)}%)" else charge.name
             label to round2(if (charge.type == "percent") base * charge.value / 100 else charge.value)
         }

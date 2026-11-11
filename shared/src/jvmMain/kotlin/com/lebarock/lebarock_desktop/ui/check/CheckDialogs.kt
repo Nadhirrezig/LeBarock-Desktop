@@ -119,6 +119,8 @@ fun CheckDialogs(model: CheckActions, currency: CurrencyInfo) {
         is CheckDialog.Cancel -> CancelDialog(model, d)
         is CheckDialog.RemoveLine -> RemoveLineDialog(model, d, currency)
     }
+    // O4b: the manager's PIN offline, over whichever window asked it.
+    com.lebarock.lebarock_desktop.ui.offline.ManagerPinWindow(model.pin)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -414,6 +416,24 @@ private fun RemoveLineDialog(model: CheckActions, d: CheckDialog.RemoveLine, cur
             if (line.sentNotFired) "Cet article est déjà envoyé : il est annulé et son stock est rendu." else "Cet article n'est pas encore parti en cuisine.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // Offline (O4b): why, from the cancel reasons or typed; the caisse keeps it with the line's stock.
+        d.form?.let { form ->
+            FormField("Motif (hors ligne)") {
+                when (val reasons = form.reasons) {
+                    UiState.Loading -> Box(Modifier.fillMaxWidth().height(Dimens.control)) { LoadingBox() }
+                    is UiState.Error -> Banner(Tone.DANGER, reasons.message, detail = reasons.hint)
+                    is UiState.Success -> ScrollArea(160.dp) {
+                        reasons.data.forEach { r ->
+                            val on = form.reasonId == r.id
+                            PickRow(r.reason, selected = on) { model.removeReason(if (on) null else r.id) }
+                        }
+                    }
+                }
+            }
+            FormField("Commentaire") {
+                TextInput(form.text, model::removeText, modifier = Modifier.fillMaxWidth(), placeholder = "Ex. renversé, erreur de commande")
+            }
+        }
         d.error?.let { Banner(Tone.DANGER, it) }
     }
 }

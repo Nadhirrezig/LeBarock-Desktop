@@ -250,25 +250,24 @@ class OfflineOrdersTest {
         offlineWithCopy()
         val refusals = listOf(
             orders.tip(812, 2.0, null),
-            orders.cancel(812, null, "test"),
             orders.moveOrder(812, 2),
             orders.mergeOrder(812, 2),
             orders.splitOrder(812, mapOf(7001L to 1)),
-            orders.setDiscount(812, "percent", 10.0),
-            orders.removeItem(812, 7001),
             orders.releaseTable(2),
             orders.customers("Sami"),
         ).map { it.exceptionOrNull() as ApiFailure }
         assertEquals("Hors ligne : ajouter un pourboire n'est pas possible tant que la caisse ne répond pas.", refusals[0].message)
-        assertEquals("Hors ligne : annuler une commande n'est pas possible tant que la caisse ne répond pas.", refusals[1].message)
-        assertEquals("Hors ligne : la remise n'est pas possible tant que la caisse ne répond pas.", refusals[5].message)
+        assertEquals("Hors ligne : changer de table n'est pas possible tant que la caisse ne répond pas.", refusals[1].message)
         assertTrue(refusals.all { it.code == OfflineOrders.OFFLINE_CODE && it.message!!.startsWith("Hors ligne : ") })
 
-        // The cart's discount and a charge taken off cannot go with an order made offline.
-        val discount = orders.sendOrder(SendOrderRequest(tableId = 2, items = listOf(pizza()), discountType = "percent", discountValue = 10.0)).exceptionOrNull()!!
-        assertTrue(discount.message!!.startsWith("Hors ligne : la remise n'est pas possible"))
-        val charge = orders.sendOrder(SendOrderRequest(tableId = 2, items = listOf(pizza()), removedChargeIds = listOf(5))).exceptionOrNull()!!
-        assertTrue(charge.message!!.startsWith("Hors ligne : retirer un frais"))
+        // O4b: cancel, discount, a line taken off and the cart's discount / charges ask the manager's PIN instead.
+        val pinAsked = listOf(
+            orders.cancel(812, null, "test"),
+            orders.setDiscount(812, "percent", 10.0),
+            orders.sendOrder(SendOrderRequest(tableId = 2, items = listOf(pizza()), discountType = "percent", discountValue = 10.0)),
+            orders.sendOrder(SendOrderRequest(tableId = 2, items = listOf(pizza()), removedChargeIds = listOf(5))),
+        ).map { (it.exceptionOrNull() as ApiFailure).code }
+        assertEquals(List(4) { OfflineOrders.PAYMENT_PIN_REQUIRED }, pinAsked)
         assertEquals(0, store.outboxSize(), "nothing recorded")
         assertEquals(0, printed.size)
         assertEquals(0, server.requestCount)

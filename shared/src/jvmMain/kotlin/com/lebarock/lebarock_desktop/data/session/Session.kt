@@ -81,7 +81,8 @@ data class Session(val token: String, val user: UserDto, val offline: Boolean = 
     companion object {
         /**
          * The « Hors ligne » session of [access]'s Caisse: the caisse's « Hors ligne » role (orders, the check, the bill),
-         * « Encaisser » behind the payment PIN; no cancel, no discount, no Caisse page.
+         * « Encaisser », and (O4b) cancel, discount, waiter, charges and a sent line taken off, behind the payment PIN; no
+         * credit, no Caisse page.
          */
         fun offline(access: com.lebarock.lebarock_desktop.data.offline.OfflineAccess) = Session(
             token = "",
@@ -91,9 +92,10 @@ data class Session(val token: String, val user: UserDto, val offline: Boolean = 
                 roles = listOf("Hors ligne"),
                 terminal = com.lebarock.lebarock_desktop.data.remote.TerminalDto(access.caisseId, access.caisseName, access.caisseMenuId.takeIf { it > 0 }),
                 abilities = com.lebarock.lebarock_desktop.data.remote.AbilitiesDto(
-                    kitchen = false, orders = true, forceSend = false, takePayment = true, cancelOrder = false,
-                    showOrders = true, cashRegister = false, useCashRegister = false, applyDiscount = false, giveCredit = false,
-                    assignWaiter = false, createExpense = false, showExpense = false, manageSettings = false, updateOrder = true,
+                    // O4b: cancel, discount and waiter too, each behind the manager's payment PIN (once per check).
+                    kitchen = false, orders = true, forceSend = false, takePayment = true, cancelOrder = true,
+                    showOrders = true, cashRegister = false, useCashRegister = false, applyDiscount = true, giveCredit = false,
+                    assignWaiter = true, createExpense = false, showExpense = false, manageSettings = false, updateOrder = true,
                 ),
             ),
             offline = true,

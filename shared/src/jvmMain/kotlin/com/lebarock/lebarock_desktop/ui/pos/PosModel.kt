@@ -496,7 +496,9 @@ class PosModel(
                     discountForm = null
                     messageChannel.trySend(change.message)
                 }
-                .onFailure { e -> discountForm = f.copy(busy = false, error = e.message ?: "Remise refusée.") }
+                .onFailure { e ->
+                    discountForm = f.copy(busy = false, error = if (this@PosModel.check.pin.asks(e, check.id, ::saveDiscount)) null else e.message ?: "Remise refusée.")
+                }
         }
     }
 
@@ -511,7 +513,7 @@ class PosModel(
         scope.launch {
             orders.setDiscount(check.id, null, null)
                 .onSuccess { change -> existing = UiState.Success(change.order); messageChannel.trySend(change.message) }
-                .onFailure { e -> messageChannel.trySend(e.message ?: "Remise non retirée.") }
+                .onFailure { e -> if (!this@PosModel.check.pin.asks(e, check.id, ::removeDiscount)) messageChannel.trySend(e.message ?: "Remise non retirée.") }
         }
     }
 
@@ -674,6 +676,8 @@ class PosModel(
 
     private fun failed(e: Throwable, action: String, orderIdFallback: Long?) {
         val failure = e as? ApiFailure
+        // Offline (O4b): the cart's discount, charges or waiter ask the manager's PIN, then the order goes again.
+        if (check.pin.asks(e, orderIdFallback ?: com.lebarock.lebarock_desktop.data.offline.OfflineOrders.NEW_ORDER) { submit(action) }) return
         when {
             failure?.noCaisse == true -> noCaisse = failure.message
             failure?.stockWaiting == true -> {

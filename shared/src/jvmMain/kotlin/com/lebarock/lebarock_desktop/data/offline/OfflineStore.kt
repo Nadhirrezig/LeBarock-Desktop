@@ -141,6 +141,8 @@ data class LocalOrderEntity(
     val syncedNumber: String? = null,
     /** Payments taken offline on it (step 3): JSON of `LocalPayment`. */
     val paymentsJson: String? = null,
+    /** The check's changes taken offline (O4b: discount, cancel, waiter, charge, line taken off): JSON of `LocalEdit`. */
+    val editsJson: String? = null,
 )
 
 /**
@@ -166,7 +168,7 @@ class OfflineStore private constructor(private val connection: Connection, val p
 
     companion object {
         /** The schema's version (`PRAGMA user_version`); raise it with each change and add its step to [migrate]. */
-        const val SCHEMA_VERSION = 2
+        const val SCHEMA_VERSION = 3
 
         /**
          * Opens `offline.db` (made on the first start). A file that cannot be read is kept aside
@@ -219,6 +221,8 @@ class OfflineStore private constructor(private val connection: Connection, val p
                 // O4a: one PIN check per Caisse (the branch's copy). The old single row goes; the next copy (within
                 // the minute, with the PC's key) brings them back.
                 if (version < 2) SCHEMA_V2.forEach(st::execute)
+                // O4b: the check's changes taken offline.
+                if (version < 3) SCHEMA_V3.forEach(st::execute)
                 st.execute("PRAGMA user_version=$SCHEMA_VERSION")
             }
             connection.commit()
@@ -523,15 +527,16 @@ class OfflineStore private constructor(private val connection: Connection, val p
         syncedOrderId = rs.longOrNull("synced_order_id"),
         syncedNumber = rs.getString("synced_number"),
         paymentsJson = rs.getString("payments_json"),
+        editsJson = rs.getString("edits_json"),
     )
 
     /** A new order: its local id (the screens' negative id comes from it). */
     suspend fun insertLocalOrder(o: LocalOrderEntity): Long = write {
         run(
             "INSERT INTO local_orders (ref, base_order_id, offline_number, table_id, table_code, pax, order_type, status, lines_json, " +
-                "created_at, synced_order_id, synced_number, payments_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "created_at, synced_order_id, synced_number, payments_json, edits_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             o.ref, o.baseOrderId, o.offlineNumber, o.tableId, o.tableCode, o.pax, o.orderType, o.status, o.linesJson,
-            o.createdAt, o.syncedOrderId, o.syncedNumber, o.paymentsJson,
+            o.createdAt, o.syncedOrderId, o.syncedNumber, o.paymentsJson, o.editsJson,
         )
         one("SELECT last_insert_rowid()") { it.getLong(1) } ?: error("Commande hors ligne non enregistrée.")
     }
@@ -539,9 +544,9 @@ class OfflineStore private constructor(private val connection: Connection, val p
     suspend fun saveLocalOrder(o: LocalOrderEntity) = write {
         run(
             "UPDATE local_orders SET ref = ?, base_order_id = ?, offline_number = ?, table_id = ?, table_code = ?, pax = ?, order_type = ?, " +
-                "status = ?, lines_json = ?, created_at = ?, synced_order_id = ?, synced_number = ?, payments_json = ? WHERE local_id = ?",
+                "status = ?, lines_json = ?, created_at = ?, synced_order_id = ?, synced_number = ?, payments_json = ?, edits_json = ? WHERE local_id = ?",
             o.ref, o.baseOrderId, o.offlineNumber, o.tableId, o.tableCode, o.pax, o.orderType, o.status, o.linesJson,
-            o.createdAt, o.syncedOrderId, o.syncedNumber, o.paymentsJson, o.localId,
+            o.createdAt, o.syncedOrderId, o.syncedNumber, o.paymentsJson, o.editsJson, o.localId,
         )
     }
 
@@ -595,4 +600,9 @@ private val SCHEMA_V2 = listOf(
     """CREATE TABLE IF NOT EXISTS offline_access (
         caisse_id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, account_name TEXT NOT NULL, account_verifier_sealed TEXT,
         payment_verifier_sealed TEXT, caisse_name TEXT NOT NULL, caisse_menu_id INTEGER NOT NULL)""",
+)
+
+/** O4b: the check's changes taken offline, kept with their order. */
+private val SCHEMA_V3 = listOf(
+    "ALTER TABLE local_orders ADD COLUMN edits_json TEXT",
 )

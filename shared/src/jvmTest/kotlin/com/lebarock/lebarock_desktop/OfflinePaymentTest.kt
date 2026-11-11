@@ -141,7 +141,8 @@ class OfflinePaymentTest {
         assertNull(sessions.token, "no token: nothing of it goes to the caisse")
         val rights = session.rights
         assertTrue(rights.orders && rights.showOrders && rights.takePayment && rights.updateOrder)
-        assertFalse(rights.cashRegister || rights.cancelOrder || rights.applyDiscount || rights.giveCredit || rights.assignWaiter || rights.manageSettings)
+        assertFalse(rights.cashRegister || rights.giveCredit || rights.manageSettings)
+        assertTrue(rights.cancelOrder && rights.applyDiscount && rights.assignWaiter, "O4b: behind the manager's PIN")
 
         // The screens work from the copy, whatever the caisse does; the account is never asked of the caisse.
         assertTrue(offline.active())

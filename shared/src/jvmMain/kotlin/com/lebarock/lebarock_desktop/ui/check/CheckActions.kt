@@ -102,7 +102,8 @@ sealed interface CheckDialog {
     data class Charges(override val order: OrderDetailDto, override val error: String? = null) : CheckDialog
     data class PaymentFix(override val order: OrderDetailDto, val payment: PaymentLineDto, override val error: String? = null) : CheckDialog
     data class Cancel(override val order: OrderDetailDto, val form: CancelForm = CancelForm(), override val error: String? = null) : CheckDialog
-    data class RemoveLine(override val order: OrderDetailDto, val line: OrderItemDto, override val error: String? = null) : CheckDialog
+    /** [form]: offline (O4b) the line's reason is asked, from the cancel reasons or typed; null online. */
+    data class RemoveLine(override val order: OrderDetailDto, val line: OrderItemDto, val form: CancelForm? = null, override val error: String? = null) : CheckDialog
 }
 
 /** The table a check can move to: free, or opened by staff with nothing on it yet (not merged into another). */
@@ -130,6 +131,9 @@ class CheckActions(
         private set
 
     val rights: Rights? get() = sessions.current?.rights
+
+    /** O4b: the manager's payment PIN, asked offline before the check's changes. */
+    val pin = com.lebarock.lebarock_desktop.ui.offline.ManagerPin(orders, scope)
 
     fun actions(order: OrderDetailDto): List<CheckAction> = CheckAction.available(order, rights)
 
@@ -293,14 +297,37 @@ class CheckActions(
 
     fun askRemoveLine(order: OrderDetailDto, line: OrderItemDto) {
         dialog = CheckDialog.RemoveLine(order, line)
+        // Offline, the line's reason is asked (client, 2026-11-11), from the copy's cancel reasons.
+        scope.launch {
+            if (!orders.offlineActive()) return@launch
+            val reasons = orders.cancelReasons().fold(
+                onSuccess = { UiState.Success(it) },
+                onFailure = { UiState.Error(it.message ?: "Motifs indisponibles.", (it as? ApiFailure)?.hint) },
+            )
+            (dialog as? CheckDialog.RemoveLine)?.let { if (it.line.id == line.id) dialog = it.copy(form = CancelForm(reasons = reasons)) }
+        }
+    }
+
+    fun removeReason(id: Long?) {
+        val d = dialog as? CheckDialog.RemoveLine ?: return
+        dialog = d.copy(form = d.form?.copy(reasonId = id), error = null)
+    }
+
+    fun removeText(text: String) {
+        val d = dialog as? CheckDialog.RemoveLine ?: return
+        dialog = d.copy(form = d.form?.copy(text = text), error = null)
     }
 
     fun confirmRemoveLine() {
         val d = dialog as? CheckDialog.RemoveLine ?: return
+        if (d.form != null && d.form.reasonId == null && d.form.text.isBlank()) {
+            dialog = d.copy(error = "Choisissez un motif, ou écrivez pourquoi l'article est retiré.")
+            return
+        }
         if (busy) return
         busy = true
         scope.launch {
-            orders.removeItem(d.order.id, d.line.id)
+            orders.removeItem(d.order.id, d.line.id, d.form?.reasonId, d.form?.text)
                 .onSuccess { result ->
                     dialog = null
                     when (result) {
@@ -311,7 +338,7 @@ class CheckActions(
                         LineRemoval.DELETED -> onClosed("Plus aucun article : la commande est supprimée.", null)
                     }
                 }
-                .onFailure { e -> dialog = d.copy(error = e.message ?: "Action impossible.") }
+                .onFailure { e -> if (!pin.asks(e, d.order.id, ::confirmRemoveLine)) dialog = d.copy(error = e.message ?: "Action impossible.") }
             busy = false
         }
     }
@@ -354,7 +381,7 @@ class CheckActions(
                     dialog = null
                     onClosed("Commande #${d.order.orderNumber} annulée.", d.order.id)
                 }
-                .onFailure { e -> dialog = d.copy(error = e.message ?: "Annulation impossible.") }
+                .onFailure { e -> if (!pin.asks(e, d.order.id, ::confirmCancel)) dialog = d.copy(error = e.message ?: "Annulation impossible.") }
             busy = false
         }
     }
@@ -374,6 +401,11 @@ class CheckActions(
                     onChanged(change)
                 }
                 .onFailure { e ->
+                    // Offline (O4b): the manager's PIN first, then the same change again.
+                    if (pin.asks(e, order.id) { run(order, keepOpen, call) }) {
+                        busy = false
+                        return@launch
+                    }
                     val message = e.message ?: "Action impossible."
                     dialog = when (val d = dialog) {
                         is CheckDialog.Tables -> d.copy(error = message)

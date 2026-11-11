@@ -2,6 +2,7 @@ package com.lebarock.lebarock_desktop.data.offline
 
 import com.lebarock.lebarock_desktop.data.ApiFailure
 import com.lebarock.lebarock_desktop.data.AppLog
+import com.lebarock.lebarock_desktop.data.CheckChange
 import com.lebarock.lebarock_desktop.data.FailureKind
 import com.lebarock.lebarock_desktop.data.PrintOutcome
 import com.lebarock.lebarock_desktop.data.Printed
@@ -9,6 +10,7 @@ import com.lebarock.lebarock_desktop.data.remote.ActiveOrderDto
 import com.lebarock.lebarock_desktop.data.remote.AddItemsRequest
 import com.lebarock.lebarock_desktop.data.remote.AreaDto
 import com.lebarock.lebarock_desktop.data.remote.CaisseDto
+import com.lebarock.lebarock_desktop.data.remote.CancelReasonDto
 import com.lebarock.lebarock_desktop.data.remote.PaymentContextDto
 import com.lebarock.lebarock_desktop.data.remote.PaymentRequest
 import com.lebarock.lebarock_desktop.data.remote.PaymentResultDto
@@ -89,6 +91,27 @@ data class LocalPayment(
 )
 
 /**
+ * A change made offline to a check (O4b, client 2026-11-11), with the outbox action that sends it: the discount, the
+ * cancel, the waiter, an extra charge taken off, a sent line taken off. Shown on the check until the caisse has it.
+ */
+@Serializable
+data class LocalEdit(
+    @SerialName("command_id") val commandId: String,
+    /** discount | cancel | waiter | remove_charge | remove_line */
+    val kind: String,
+    @SerialName("discount_type") val discountType: String? = null,
+    @SerialName("discount_value") val discountValue: Double? = null,
+    @SerialName("waiter_id") val waiterId: Long? = null,
+    @SerialName("waiter_name") val waiterName: String? = null,
+    /** The charge taken off: the check's own line (a check from the copy) or the restaurant's charge (taken offline). */
+    @SerialName("charge_id") val chargeId: Long? = null,
+    /** The line taken off: its id as the screens show it. */
+    @SerialName("item_id") val itemId: Long? = null,
+    val reason: String? = null,
+    val at: Long,
+)
+
+/**
  * This PC's own orders while the caisse does not answer (offline step 2), the handheld's OfflineOrders.
  *
  * The screens keep calling OrdersRepository; while offline, or while actions still wait to be sent (outbox first),
@@ -101,8 +124,11 @@ data class LocalPayment(
  *    Manuel setting and whatever Réglages says about bills (client, 2026-11-10); the bill prints there too.
  *  - payments (step 3): cash with change, card, the bill divided (equal, amounts, by article), behind the manager's
  *    payment PIN typed once per check for 5 minutes (client, 2026-11-10); the receipt prints here once settled.
- * Everything else waits for the caisse with a French message (client, 2026-11-10): credit, tip, discount, charges,
- * waiter, table operations, cancel, the Caisse page.
+ *  - the check's changes (O4b, client 2026-11-11): discount, cancel with its reason, a sent line with no kitchen
+ *    station taken off with its reason, waiter, extra charge — behind the same payment PIN, once per check for 5 minutes;
+ *    recorded here at once and queued for the caisse (which applies the web's rules again, and refunds a cancelled
+ *    check's money into the Caisse's session). Nothing prints for the kitchen.
+ * Everything else waits for the caisse with a French message: credit, tip, customer, table operations, the Caisse page.
  */
 class OfflineOrders(
     private val store: OfflineStore,
@@ -114,6 +140,7 @@ class OfflineOrders(
 ) {
     private val linesSerializer = ListSerializer(LocalLine.serializer())
     private val paymentsSerializer = ListSerializer(LocalPayment.serializer())
+    private val editsSerializer = ListSerializer(LocalEdit.serializer())
 
     @Volatile
     private var cached: Triple<Long, Long?, OfflineCatalog>? = null
@@ -132,8 +159,15 @@ class OfflineOrders(
         /** The code of every refusal made here: the screens can tell it from the caisse's own refusals. */
         const val OFFLINE_CODE = "offline"
 
-        /** The payment window asks the payment PIN when it gets this code (step 3). */
+        /** The payment window (and, O4b, the check's changes) ask the payment PIN when they get this code (step 3). */
         const val PAYMENT_PIN_REQUIRED = "payment_pin_required"
+
+        /** O4b: the PIN typed for an order not sent yet (the cart's discount, charges, waiter). */
+        const val NEW_ORDER = 0L
+
+        /** A dish sent to a kitchen station: online too, it leaves through its kitchen ticket (client, 2026-11-11). */
+        const val DISH_SENT =
+            "Hors ligne : cet article est parti en cuisine : annulez son ticket cuisine quand la caisse répond."
 
         /** The payment PIN opens payments on a check for 5 minutes (client, 2026-11-10: as on the handheld). */
         const val PAYMENT_UNLOCK_MS = 5 * 60_000L
@@ -164,17 +198,19 @@ class OfflineOrders(
         return sync.mustQueue()
     }
 
-    /** Payments opened on a check by the payment PIN, and until when. */
-    @Volatile
-    private var paymentUnlocked: Pair<Long, Long>? = null
+    /** Checks opened by the payment PIN (payments, and O4b the check's changes), and until when. */
+    private val unlocked = java.util.concurrent.ConcurrentHashMap<Long, Long>()
 
-    /** The payment PIN was right: payments on [orderId] are open for [PAYMENT_UNLOCK_MS]. */
+    /** The payment PIN was right: [orderId] (or [NEW_ORDER], the cart) is open for [PAYMENT_UNLOCK_MS]. */
     fun unlockPayments(orderId: Long) {
-        paymentUnlocked = orderId to (now() + PAYMENT_UNLOCK_MS)
+        unlocked[orderId] = now() + PAYMENT_UNLOCK_MS
     }
 
-    private fun paymentsOpen(orderId: Long): Boolean =
-        paymentUnlocked?.let { (id, until) -> id == orderId && now() < until } == true
+    private fun paymentsOpen(orderId: Long): Boolean = (unlocked[orderId] ?: 0L) > now()
+
+    private fun requirePin(orderId: Long) {
+        if (!paymentsOpen(orderId)) throw ApiFailure("Code du gérant requis.", FailureKind.REFUSED, code = PAYMENT_PIN_REQUIRED)
+    }
 
     fun <T> unavailable(what: String): Result<T> = Result.failure(waitsForCaisse(what))
 
@@ -223,7 +259,8 @@ class OfflineOrders(
             currency = catalog.currencyDto,
             taxes = catalog.taxes,
             charges = catalog.charges,
-            waiters = emptyList(),
+            // O4b: the copy's waiters (changing it asks the manager's PIN).
+            waiters = catalog.waiters,
         )
     }
 
@@ -353,27 +390,60 @@ class OfflineOrders(
     /** The local lines the caisse does not have yet (their action still in the outbox). */
     private fun pendingLines(local: LocalOrderEntity, pending: Set<String>): List<LocalLine> = lines(local).filter { it.commandId in pending }
 
+    private fun edits(local: LocalOrderEntity): List<LocalEdit> =
+        local.editsJson?.let { runCatching { json.decodeFromString(editsSerializer, it) }.getOrNull() }.orEmpty()
+
     private fun merge(catalog: OfflineCatalog, base: OrderDetailDto, local: LocalOrderEntity, lines: List<LocalLine>, pending: Set<String>): OrderDetailDto {
-        // What was paid offline and is not at the caisse yet (step 3).
+        // What was paid offline and is not at the caisse yet (step 3), and the changes it does not have yet (O4b).
         val paid = payments(local).filter { it.commandId in pending }.sumOf { it.amount }
-        if (lines.isEmpty() && paid == 0.0 && local.status == base.status) return base
-        val subTotal = base.subTotal + lines.sumOf { it.amount }
-        val totals = catalog.totals(subTotal, base.discountType, base.discountValue, base.tipAmount ?: 0.0, base.orderType)
-        return base.copy(
+        val changes = edits(local).filter { it.commandId in pending }
+        if (lines.isEmpty() && paid == 0.0 && local.status == base.status && changes.isEmpty()) return base
+        val view = base.copy(
             status = local.status,
-            subTotal = totals.subTotal,
-            total = if (lines.isEmpty()) base.total else totals.total,
             items = base.items + lines.map { line -> line.toItem(local, indexOf(local, line)) },
             kots = base.kots + rounds(local, lines),
             itemsCount = base.items.size + lines.size,
             offlineNumber = base.offlineNumber ?: local.offlineNumber,
             amountPaid = OfflineCatalog.round2(base.amountPaid + paid),
         )
+        if (lines.isEmpty() && changes.isEmpty()) return view
+        return recompute(catalog, withEdits(view, changes))
+    }
+
+    /** The changes made offline, on the check as shown (O4b). */
+    private fun withEdits(order: OrderDetailDto, changes: List<LocalEdit>): OrderDetailDto {
+        if (changes.isEmpty()) return order
+        var o = order
+        changes.forEach { e ->
+            o = when (e.kind) {
+                "discount" -> o.copy(discountType = e.discountType, discountValue = e.discountValue.takeIf { e.discountType != null })
+                "waiter" -> o.copy(waiter = e.waiterId?.let { OrderRefDto(it, name = e.waiterName) })
+                "remove_charge" -> o.copy(charges = o.charges.filter { it.id != e.chargeId })
+                "remove_line" -> o.copy(items = o.items.filter { it.id != e.itemId })
+                "cancel" -> o.copy(status = "canceled", cancelReason = e.reason)
+                else -> o
+            }
+        }
+        return o.copy(itemsCount = o.items.size)
+    }
+
+    /** The totals again from the lines, the discount, the check's charges and the tip (the caisse's OrderTotals). */
+    private fun recompute(catalog: OfflineCatalog, o: OrderDetailDto): OrderDetailDto {
+        val sub = o.items.sumOf { it.amount }
+        val totals = catalog.totalsOf(sub, o.discountType, o.discountValue, o.tipAmount ?: 0.0, o.charges, o.orderType)
+        val base = maxOf(0.0, OfflineCatalog.round2(totals.subTotal - totals.discount))
+        return o.copy(
+            subTotal = totals.subTotal,
+            discountAmount = totals.discount,
+            total = totals.total,
+            charges = o.charges.map { c -> c.copy(amount = OfflineCatalog.round2(if (c.type == "percent") base * c.value / 100 else c.value)) },
+        )
     }
 
     private fun standalone(catalog: OfflineCatalog, local: LocalOrderEntity, lines: List<LocalLine>): OrderDetailDto {
         val totals = catalog.totals(lines.sumOf { it.amount }, null, null, 0.0, local.orderType)
-        return OrderDetailDto(
+        val open = local.status == "kot" || local.status == "billed"
+        val order = OrderDetailDto(
             id = screenId(local.localId),
             orderNumber = local.syncedNumber ?: local.offlineNumber.orEmpty(),
             orderType = local.orderType,
@@ -391,7 +461,11 @@ class OfflineOrders(
             items = lines.mapIndexed { i, line -> line.toItem(local, i) },
             kots = rounds(local, lines),
             offlineNumber = local.offlineNumber,
+            // The restaurant's charges for its type, as the caisse puts them on (O4b: one can be taken off).
+            charges = catalog.chargesFor(local.orderType, totals.subTotal).map { it.copy(removable = open) },
         )
+        val changes = edits(local)
+        return if (changes.isEmpty()) order else recompute(catalog, withEdits(order, changes))
     }
 
     /** A local line's place among all its order's lines: its item id stays the same whatever is shown. */
@@ -437,12 +511,20 @@ class OfflineOrders(
      * check. [Printed.print] says what the counter's printer did (kitchen tickets, and the bill when asked).
      */
     suspend fun sendOrder(request: SendOrderRequest): Result<Printed<OrderActionDto>> = offline {
-        if (request.discountType != null) refusal("Hors ligne : la remise n'est pas possible tant que la caisse ne répond pas. Retirez-la pour envoyer.")
-        if (request.removedChargeIds.isNotEmpty()) refusal("Hors ligne : retirer un frais n'est pas possible tant que la caisse ne répond pas. Remettez-le pour envoyer.")
         val catalog = catalog()
         val tableId = request.tableId.takeIf { request.orderType == "dine_in" }
         val existing = tableId?.let { id -> openOrders(catalog).firstOrNull { it.table?.id == id } }
+        // O4b: the cart's discount, charges taken off and waiter go with a new order, behind the manager's PIN.
+        val waiter = request.waiterId?.takeIf { it != catalog.offlineAccountId }?.let { id -> catalog.waiters.firstOrNull { it.id == id } }
+        val changes = existing == null && (request.discountType != null || request.removedChargeIds.isNotEmpty() || waiter != null)
+        if (changes) requirePin(NEW_ORDER)
         val (orderId, kitchen) = round(catalog, existing?.id, tableId, request.orderType, request.numberOfPax ?: 1, request.items, request.note)
+        if (changes) {
+            unlockPayments(orderId)
+            request.removedChargeIds.forEach { removeChargeNow(catalog, orderId, it) }
+            if (request.discountType != null) discountNow(catalog, orderId, request.discountType, request.discountValue)
+            if (waiter != null) waiterNow(catalog, orderId, waiter.id)
+        }
 
         var bill: PrintOutcome? = null
         if (request.action == "bill" || request.action == "bill_print") bill = bill(catalog, orderId, request.action == "bill_print")
@@ -599,6 +681,159 @@ class OfflineOrders(
         return printBill(catalog, billed)
     }
 
+    // ---------------------------------------------------------------- the check's changes (O4b)
+
+    /** « Annuler la commande » offline: the reasons for a whole order, from the copy. */
+    suspend fun cancelReasons(): Result<List<CancelReasonDto>> = offline { catalog().cancelReasons }
+
+    /** « Remise » on an open check, behind the manager's PIN; null [type] takes it off. The web's rules. */
+    suspend fun setDiscount(orderId: Long, type: String?, value: Double?): Result<CheckChange> = offline {
+        requirePin(orderId)
+        val catalog = catalog()
+        discountNow(catalog, orderId, type, value)
+        CheckChange(detail(catalog, orderId) ?: refusal(NOT_FOUND), if (type == null) "Remise retirée (hors ligne)." else "Remise appliquée (hors ligne).")
+    }
+
+    /** « Changer de serveur »: one of the copy's waiters, behind the manager's PIN. */
+    suspend fun setWaiter(orderId: Long, waiterId: Long): Result<CheckChange> = offline {
+        requirePin(orderId)
+        val catalog = catalog()
+        val name = waiterNow(catalog, orderId, waiterId)
+        CheckChange(detail(catalog, orderId) ?: refusal(NOT_FOUND), "Serveur : $name (hors ligne).")
+    }
+
+    /** « Retirer des frais »: one of the check's extra charges, behind the manager's PIN. */
+    suspend fun removeCharge(orderId: Long, chargeId: Long): Result<CheckChange> = offline {
+        requirePin(orderId)
+        val catalog = catalog()
+        removeChargeNow(catalog, orderId, chargeId)
+        CheckChange(detail(catalog, orderId) ?: refusal(NOT_FOUND), "Frais retirés (hors ligne).")
+    }
+
+    /**
+     * « Annuler la commande » offline, with its reason, behind the manager's PIN: the check is « Annulée » here at once;
+     * money taken on it goes back when the caisse applies it (into the Caisse's open session, client 2026-11-11).
+     */
+    suspend fun cancel(orderId: Long, reasonId: Long?, reasonText: String?): Result<Unit> = offline {
+        requirePin(orderId)
+        val catalog = catalog()
+        val order = openOrder(catalog, orderId)
+        val reason = reasonOf(catalog, reasonId, reasonText) ?: refusal("Choisissez un motif d'annulation, ou écrivez pourquoi.")
+        change(catalog, orderId, "order.cancel", "Annulation · ", status = "canceled",
+            data = { putReason(reasonId, reasonText) }, edit = { LocalEdit(it, "cancel", reason = reason, at = now()) })
+        AppLog.info("Hors ligne : commande ${order.offlineNumber ?: order.orderNumber} annulée ($reason)")
+    }
+
+    /**
+     * A line taken off offline, with its reason, behind the manager's PIN (O4b): one sent to no kitchen station (a
+     * drink) or waiting for stock, as online; never a dish sent to a kitchen ([DISH_SENT]); not on a check that took
+     * money. The last line gone cancels the check.
+     */
+    suspend fun removeLine(orderId: Long, itemId: Long, reasonId: Long?, reasonText: String?): Result<Boolean> = offline {
+        val catalog = catalog()
+        val order = openOrder(catalog, orderId)
+        val item = order.items.firstOrNull { it.id == itemId } ?: refusal("Cet article n'est plus sur la commande.")
+        if (item.fired) refusal(DISH_SENT)
+        if (order.amountPaid > 0.0) refusal("Cette commande a déjà un paiement : annulez-la pour rembourser, ou laissez l'article.")
+        val reason = reasonOf(catalog, reasonId, reasonText) ?: refusal("Choisissez un motif, ou écrivez pourquoi l'article est retiré.")
+        requirePin(orderId)
+        val last = order.items.size == 1
+        val local = localFor(orderId) ?: baseFor(orderId)
+        change(catalog, orderId, "order.remove_line", "Article retiré · ", status = if (last) "canceled" else null,
+            data = { put("line_ref", lineRef(local, itemId)); putReason(reasonId, reasonText) },
+            edit = { LocalEdit(it, "remove_line", itemId = itemId, reason = reason, at = now()) })
+        last
+    }
+
+    private suspend fun discountNow(catalog: OfflineCatalog, orderId: Long, type: String?, value: Double?) {
+        val kind = type?.takeIf { it == "fixed" || it == "percent" }
+        if (type != null && kind == null) refusal("Type de remise inconnu : montant fixe ou pourcentage.")
+        if (kind == "percent" && (value ?: 0.0) > 100) refusal("La remise ne peut pas dépasser 100 %.")
+        if (kind != null && (value ?: 0.0) <= 0.0) refusal("Indiquez la remise (un nombre).")
+        run {
+            val order = openOrder(catalog, orderId)
+            // What was already paid stays paid: the check can't drop below it (the caisse's OrderDiscount).
+            val after = recompute(catalog, order.copy(discountType = kind, discountValue = value.takeIf { kind != null }))
+            if (order.amountPaid > 0 && after.total < order.amountPaid - TOLERANCE) {
+                refusal("Cette remise ferait passer le ticket sous ce qui est déjà payé (${catalog.money(order.amountPaid)}).")
+            }
+            change(catalog, orderId, "order.discount", "Remise · ",
+                data = { put("discount_type", kind); if (kind != null) put("discount_value", value ?: 0.0) },
+                edit = { LocalEdit(it, "discount", discountType = kind, discountValue = value.takeIf { kind != null }, at = now()) })
+        }
+    }
+
+    private suspend fun waiterNow(catalog: OfflineCatalog, orderId: Long, waiterId: Long): String {
+        val waiter = catalog.waiters.firstOrNull { it.id == waiterId } ?: refusal("Ce serveur n'est pas dans les données hors ligne de ce poste.")
+        run {
+            openOrder(catalog, orderId)
+            change(catalog, orderId, "order.waiter", "Serveur · ", data = { put("waiter_id", waiter.id) },
+                edit = { LocalEdit(it, "waiter", waiterId = waiter.id, waiterName = waiter.name, at = now()) })
+        }
+        return waiter.name
+    }
+
+    private suspend fun removeChargeNow(catalog: OfflineCatalog, orderId: Long, chargeId: Long) {
+        run {
+            val order = openOrder(catalog, orderId)
+            val charge = order.charges.firstOrNull { it.id == chargeId } ?: refusal("Ces frais ne sont plus sur la commande.")
+            change(catalog, orderId, "order.remove_charge", "Frais retirés · ",
+                // A check from the copy names its own charge line; an order taken offline, the restaurant's charge.
+                data = { if (orderId >= 0) put("order_charge_id", charge.id) else put("charge_id", charge.id) },
+                edit = { LocalEdit(it, "remove_charge", chargeId = charge.id, at = now()) })
+        }
+    }
+
+    private suspend fun openOrder(catalog: OfflineCatalog, orderId: Long): OrderDetailDto {
+        val order = detail(catalog, orderId) ?: refusal(NOT_FOUND)
+        if (order.status != "kot" && order.status != "billed") refusal("Cette commande est réglée ou annulée : elle ne change plus.")
+        return order
+    }
+
+    private fun reasonOf(catalog: OfflineCatalog, reasonId: Long?, text: String?): String? {
+        val listed = reasonId?.let { id -> catalog.cancelReasons.firstOrNull { it.id == id }?.reason }
+        val typed = text?.trim()?.takeIf { it.isNotEmpty() }
+        return listOfNotNull(listed, typed).joinToString(" — ").ifEmpty { null }
+    }
+
+    private fun kotlinx.serialization.json.JsonObjectBuilder.putReason(reasonId: Long?, text: String?) {
+        reasonId?.let { put("reason_id", it) }
+        text?.trim()?.takeIf { it.isNotEmpty() }?.let { put("reason", it.take(255)) }
+    }
+
+    /**
+     * One change of the check: recorded on its local order (with its new [status] when it closes it) and queued for
+     * the caisse, authorized by the manager's PIN; undone here when it cannot be queued.
+     */
+    private suspend fun change(
+        catalog: OfflineCatalog,
+        orderId: Long,
+        type: String,
+        label: String,
+        status: String? = null,
+        data: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit,
+        edit: (String) -> LocalEdit,
+    ) {
+        val actor = catalog.offlineAccountId ?: refusal(NOT_CONFIGURED)
+        val local = localFor(orderId) ?: baseFor(orderId)
+        val commandId = UUID.randomUUID().toString()
+        val saved = local.copy(
+            status = status ?: local.status,
+            editsJson = json.encodeToString(editsSerializer, edits(local) + edit(commandId)),
+        )
+        store.saveLocalOrder(saved)
+        try {
+            sync.enqueue(type, buildJsonObject {
+                put("order_ref", saved.ref)
+                data()
+                put("authorized_by", "payment_pin")
+            }, actor, label + label(saved), orderRef = saved.ref, id = commandId)
+        } catch (e: Exception) {
+            store.saveLocalOrder(local)
+            throw e
+        }
+    }
+
     // ---------------------------------------------------------------- payments (step 3)
 
     /** The payment window offline: cash and card (and the bill divided), no credit, no tip; the drawer is the caisse's. */
@@ -638,7 +873,7 @@ class OfflineOrders(
     suspend fun pay(orderId: Long, request: PaymentRequest): Result<Printed<PaymentResultDto>> = offline {
         val catalog = catalog()
         val actor = catalog.offlineAccountId ?: refusal(NOT_CONFIGURED)
-        if (!paymentsOpen(orderId)) throw ApiFailure("Code de paiement requis.", FailureKind.REFUSED, code = PAYMENT_PIN_REQUIRED)
+        requirePin(orderId)
 
         val order = detail(catalog, orderId) ?: refusal(NOT_FOUND)
         if (order.stockWaiting != null || order.items.any { it.stockState == "waiting" }) refusal(STOCK_WAITING)
@@ -891,7 +1126,7 @@ class OfflineOrders(
         )
 
     private fun receipt(catalog: OfflineCatalog, order: OrderDetailDto): ReceiptPayload {
-        val totals = catalog.totals(order.subTotal, order.discountType, order.discountValue, order.tipAmount ?: 0.0, order.orderType)
+        val totals = catalog.totalsOf(order.subTotal, order.discountType, order.discountValue, order.tipAmount ?: 0.0, order.charges, order.orderType)
         val at = order.dateTime?.let { runCatching { OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() }
             ?: runCatching { order.dateTime?.let { Instant.parse(it).toEpochMilli() } }.getOrNull() ?: now()
 
